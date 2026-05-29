@@ -1,0 +1,15 @@
+name = "papa-watch-bot"
+main = "src/index.js"
+compatibility_date = "2026-05-29"
+
+# Secrets (set with `wrangler secret put <NAME>`):
+#   TELEGRAM_BOT_TOKEN   — from @BotFather
+#   WEBHOOK_SECRET       — a random string; Telegram echoes it back in headers
+#                          so we know it's not a forgery
+#
+# Vars below are non-secret config.
+
+[vars]
+PAIR_ID         = "stanley-dad-2026"
+MQTT_BROKER_WSS = "wss://broker.emqx.io:8084/mqtt"
+ALLOWED_USERS   = ""                 # comma-separated Telegram usernames; empty = anyone in the bot's allowed chats

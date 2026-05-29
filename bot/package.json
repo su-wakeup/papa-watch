@@ -1,0 +1,15 @@
+{
+  "name": "papa-watch-bot",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Cloudflare Worker bridging Telegram bot commands → MQTT → Stanley's StopWatch.",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "logs": "wrangler tail"
+  },
+  "devDependencies": {
+    "wrangler": "^3.95.0"
+  }
+}
