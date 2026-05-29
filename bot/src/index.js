@@ -80,21 +80,38 @@ async function publishMqtt(brokerWss, topic, payload) {
     ws.send(makeConnect(clientId));
 
     await new Promise((resolve, reject) => {
-        const timeout = setTimeout(() => reject(new Error("CONNACK timeout")), 5000);
+        const timeout = setTimeout(() => reject(new Error("CONNACK timeout 5s")), 5000);
 
-        ws.addEventListener("message", (ev) => {
-            const data = ev.data instanceof ArrayBuffer ? new Uint8Array(ev.data) : ev.data;
+        const onPacket = (data) => {
             if (data[0] === 0x20 /* CONNACK */) {
                 clearTimeout(timeout);
                 ws.send(makePublish(topic, payload));
                 setTimeout(() => {
-                    ws.send(DISCONNECT_PACKET);
-                    ws.close();
+                    try { ws.send(DISCONNECT_PACKET); ws.close(); } catch (_) {}
                     resolve();
                 }, 80);
             }
+        };
+
+        ws.addEventListener("message", async (ev) => {
+            try {
+                if (ev.data instanceof ArrayBuffer) {
+                    onPacket(new Uint8Array(ev.data));
+                } else if (ev.data && typeof ev.data.arrayBuffer === "function") {
+                    // Cloudflare delivers binary WS frames as Blob
+                    const buf = await ev.data.arrayBuffer();
+                    onPacket(new Uint8Array(buf));
+                }
+                // ignore string frames (broker shouldn't send those for MQTT)
+            } catch (e) {
+                clearTimeout(timeout);
+                reject(e);
+            }
         });
-        ws.addEventListener("error", (e) => { clearTimeout(timeout); reject(e); });
+        ws.addEventListener("error", (e) => {
+            clearTimeout(timeout);
+            reject(new Error("ws error: " + (e?.message || "")));
+        });
         ws.addEventListener("close", () => { clearTimeout(timeout); resolve(); });
     });
 }
@@ -119,7 +136,7 @@ const HELP = [
 
 async function handleTelegram(update, env) {
     const msg = update.message;
-    if (!msg || !msg.text) return new Response("ok");
+    if (!msg || !msg.text) return;
 
     const text = msg.text.trim();
     const from = msg.from?.username || msg.from?.first_name || "unknown";
@@ -130,7 +147,7 @@ async function handleTelegram(update, env) {
         const allowed = env.ALLOWED_USERS.split(",").map((s) => s.trim()).filter(Boolean);
         if (allowed.length && !allowed.includes(from)) {
             await telegramSend(env.TELEGRAM_BOT_TOKEN, chatId, `not authorized: @${from}`);
-            return new Response("ok");
+            return;
         }
     }
 
@@ -138,7 +155,7 @@ async function handleTelegram(update, env) {
 
     if (text === "/start" || text === "/help") {
         await telegramSend(env.TELEGRAM_BOT_TOKEN, chatId, HELP);
-        return new Response("ok");
+        return;
     }
 
     if (text === "/heart" || text.startsWith("/heart ")) {
@@ -152,9 +169,10 @@ async function handleTelegram(update, env) {
             await publishMqtt(env.MQTT_BROKER_WSS, topic, payload);
             await telegramSend(env.TELEGRAM_BOT_TOKEN, chatId, `💕 sent: ${tail || "❤"}`);
         } catch (e) {
+            console.error("/heart failed:", e.message);
             await telegramSend(env.TELEGRAM_BOT_TOKEN, chatId, `failed: ${e.message}`);
         }
-        return new Response("ok");
+        return;
     }
 
     if (text === "/ota") {
@@ -164,16 +182,16 @@ async function handleTelegram(update, env) {
         } catch (e) {
             await telegramSend(env.TELEGRAM_BOT_TOKEN, chatId, `failed: ${e.message}`);
         }
-        return new Response("ok");
+        return;
     }
 
     await telegramSend(env.TELEGRAM_BOT_TOKEN, chatId, `unknown: ${text}\n${HELP}`);
-    return new Response("ok");
 }
 
 export default {
     async fetch(request, env, ctx) {
         const url = new URL(request.url);
+        console.log(`[req] ${request.method} ${url.pathname}`);
 
         // Health check / root
         if (request.method === "GET" && url.pathname === "/") {
@@ -189,7 +207,9 @@ export default {
                 return new Response("forbidden", { status: 403 });
             }
             const update = await request.json();
-            ctx.waitUntil(handleTelegram(update, env));
+            // Telegram expects fast 200; do the work asynchronously.
+            ctx.waitUntil(handleTelegram(update, env).catch((e) =>
+                console.error("[handleTelegram] threw:", e.message, e.stack)));
             return new Response("ok");
         }
 
