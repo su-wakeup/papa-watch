@@ -16,6 +16,7 @@
 #include "wifi_setup.h"
 #include "ntp_sync.h"
 #include "lvgl_port.h"
+#include "face_boot.h"
 #include "face_lcd.h"
 #include "heart_relay.h"
 #include "ota.h"
@@ -411,8 +412,8 @@ void setup() {
         seedClockIfNeeded();
     }
 
-    drawBootBanner();
-    delay(2500);
+    // (the old M5GFX boot banner has been replaced by face_boot's LVGL animation,
+    //  which fires once LVGL is up after WiFi+NTP — see below)
 
     Serial.println();
     Serial.println("================ BOOT ================");
@@ -439,8 +440,9 @@ void setup() {
     // LVGL takes over the panel from here. Boot banner + wifi flow were direct M5GFX;
     // the watch face is now driven by LVGL widgets.
     lvgl_port::begin(468, 468);
-    face_lcd::create();
-    face_lcd::update();
+    // "Hello Stanley" greeting animation, then the LCD face. The transition
+    // happens in loop() once face_boot::finished() returns true.
+    face_boot::create();
 
     // ── heartbeat relay over MQTT ──
     heart_relay::setOnReceive([](const char* payload, unsigned int len) {
@@ -564,6 +566,20 @@ void loop() {
     // ── LVGL drives the panel; we just feed the tick and refresh the face once/sec ──
     lvgl_port::tick();
     heart_relay::tick();
+
+    // Boot greeting first; switch to the watch face when it's done.
+    static bool s_boot_done = false;
+    if (!s_boot_done) {
+        face_boot::update();
+        if (face_boot::finished()) {
+            face_boot::destroy();
+            face_lcd::create();
+            face_lcd::update();
+            s_boot_done = true;
+        }
+        delay(5);
+        return;
+    }
 
     // ── touch hold → arm → release → send heart to dad ──
     auto tt2 = M5.Touch.getDetail();
