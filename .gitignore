@@ -1,0 +1,24 @@
+.pio/
+.vscode/
+.DS_Store
+*.bin
+*.elf
+*.map
+
+# OTA test artifacts
+assets/dseg.zip
+
+# Trim DSEG to only what we convert (Regular weights of Modern series).
+# .woff/.woff2 are web font variants we don't need on a microcontroller.
+assets/dseg/fonts-DSEG_v046/**/*.woff
+assets/dseg/fonts-DSEG_v046/**/*.woff2
+assets/dseg/fonts-DSEG_v046/**/*-Bold*.ttf
+assets/dseg/fonts-DSEG_v046/**/*-Light*.ttf
+assets/dseg/fonts-DSEG_v046/**/*-Italic*.ttf
+assets/dseg/fonts-DSEG_v046/DSEG7-Classic*
+assets/dseg/fonts-DSEG_v046/DSEG14-Classic*
+assets/dseg/fonts-DSEG_v046/DSEG7-Modern-MINI*
+assets/dseg/fonts-DSEG_v046/DSEG14-Modern-MINI*
+assets/dseg/fonts-DSEG_v046/DSEG7-7SEGG-CHAN*
+assets/dseg/fonts-DSEG_v046/documents*
+assets/dseg/fonts-DSEG_v046/sample*
