@@ -33,9 +33,10 @@ static bool fetchManifest(const char* url, String& out_tag, String& out_asset_ur
     HTTPClient http;
     bool ok = false;
 
+    // TLS receive buffer sized for full GitHub Releases JSON (~3-8 KB)
+    WiFiClientSecure client;
     if (strncmp(url, "https://", 8) == 0) {
-        WiFiClientSecure client;
-        client.setInsecure();        // skip cert pinning for now; GitHub uses a known CA
+        client.setInsecure();
         ok = http.begin(client, url);
     } else {
         ok = http.begin(url);
@@ -44,6 +45,7 @@ static bool fetchManifest(const char* url, String& out_tag, String& out_asset_ur
         Serial.printf("[ota] http.begin failed for %s\n", url);
         return false;
     }
+    http.setTimeout(15000);
     http.addHeader("User-Agent", "M5StopWatch-OTA");
     http.addHeader("Accept", "application/vnd.github+json");
 
@@ -97,6 +99,7 @@ static bool downloadAndApply(const char* url) {
         ok = http.begin(url);
     }
     if (!ok) return false;
+    http.setTimeout(20000);
     http.addHeader("User-Agent", "M5StopWatch-OTA");
 
     // GitHub Releases serves through redirects → enable follow

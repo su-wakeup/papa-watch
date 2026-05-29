@@ -20,9 +20,10 @@
 #include "heart_relay.h"
 #include "ota.h"
 
-// LAN test endpoint for OTA. Will switch to GitHub Releases API once repo is set up:
-//   https://api.github.com/repos/<owner>/M5Stack_STOPWATCH/releases/latest
-#define OTA_MANIFEST_URL "http://192.168.7.166:8000/releases/latest"
+// OTA endpoint — real GitHub Releases now. Pushing a v*.*.* tag to the repo
+// triggers .github/workflows/release.yml, which uploads firmware.bin as an
+// asset. The on-watch fetcher hits the API below and pulls the newest tag.
+#define OTA_MANIFEST_URL "https://api.github.com/repos/su-wakeup/papa-watch/releases/latest"
 
 // ── geometry ─────────────────────────────────────────────
 static constexpr int CENTER_X = 234;
