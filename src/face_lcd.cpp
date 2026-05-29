@@ -51,6 +51,11 @@ static lv_obj_t* s_dad_lbl    = nullptr;
 static lv_obj_t* s_dad_time   = nullptr;
 static lv_obj_t* s_brand_bot  = nullptr;
 
+// status indicators (top of face)
+static lv_obj_t* s_wifi_dot   = nullptr;
+static lv_obj_t* s_mqtt_dot   = nullptr;
+static lv_obj_t* s_unread_lbl = nullptr;
+
 // alert state (heart sent / received)
 static uint32_t  s_alert_until    = 0;
 static uint32_t  s_alert_color    = 0;
@@ -75,6 +80,27 @@ void create() {
     // ── top bezel: STANLEY ──
     s_brand_top = mk_label("STANLEY", &dseg14_modern_20, COL_RIM,
                            LV_ALIGN_TOP_MID, 0, 24);
+
+    // ── status dots (left of bezel): WiFi and MQTT ──
+    auto mk_dot = [&](int xo, int yo) {
+        lv_obj_t* d = lv_obj_create(s_scr);
+        lv_obj_remove_style_all(d);
+        lv_obj_set_size(d, 11, 11);
+        lv_obj_set_style_radius(d, LV_RADIUS_CIRCLE, 0);
+        lv_obj_set_style_bg_opa(d, LV_OPA_COVER, 0);
+        lv_obj_set_style_bg_color(d, lv_color_hex(COL_GHOST), 0);
+        lv_obj_align(d, LV_ALIGN_TOP_MID, xo, yo);
+        return d;
+    };
+    s_wifi_dot = mk_dot(-66, 28);
+    s_mqtt_dot = mk_dot(-52, 28);
+
+    // ── unread message badge (right of bezel) ──
+    s_unread_lbl = lv_label_create(s_scr);
+    lv_obj_set_style_text_font(s_unread_lbl, &dseg14_modern_20, 0);
+    lv_obj_set_style_text_color(s_unread_lbl, lv_color_hex(0xFF6FAE), 0);
+    lv_label_set_text(s_unread_lbl, "");
+    lv_obj_align(s_unread_lbl, LV_ALIGN_TOP_MID, 56, 24);
 
     // ── weekday strip ──
     const char* wd[7] = {"SU","MO","TU","WE","TH","FR","SA"};
@@ -179,6 +205,26 @@ void update() {
     }
 }
 
+void setStatus(bool wifi_up, bool mqtt_up, int unread_count) {
+    if (s_wifi_dot) {
+        lv_obj_set_style_bg_color(s_wifi_dot,
+            lv_color_hex(wifi_up ? COL_LIT : COL_GHOST), 0);
+    }
+    if (s_mqtt_dot) {
+        lv_obj_set_style_bg_color(s_mqtt_dot,
+            lv_color_hex(mqtt_up ? COL_LIT : COL_GHOST), 0);
+    }
+    if (s_unread_lbl) {
+        if (unread_count > 0) {
+            char buf[8];
+            snprintf(buf, sizeof(buf), "%d", unread_count);
+            lv_label_set_text(s_unread_lbl, buf);
+        } else {
+            lv_label_set_text(s_unread_lbl, "");
+        }
+    }
+}
+
 void showAlert(const char* text, uint32_t color_hex, uint32_t duration_ms) {
     if (!s_brand_bot) return;
     strncpy(s_alert_text, text, sizeof(s_alert_text) - 1);
@@ -196,6 +242,7 @@ void destroy() {
     s_brand_top = s_alm = s_am = s_pm = nullptr;
     s_time_ghost = s_time_live = s_sec_ghost = s_sec_live = nullptr;
     s_date = s_div_line = s_dad_lbl = s_dad_time = s_brand_bot = nullptr;
+    s_wifi_dot = s_mqtt_dot = s_unread_lbl = nullptr;
 }
 
 }  // namespace face_lcd

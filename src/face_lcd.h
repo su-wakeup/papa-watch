@@ -11,5 +11,6 @@ void create();
 void update();          // refresh once per second
 void destroy();         // tear down when switching faces
 void showAlert(const char* text, uint32_t color_hex, uint32_t duration_ms);
+void setStatus(bool wifi_up, bool mqtt_up, int unread_count);
 
 }  // namespace face_lcd

@@ -3,7 +3,6 @@
 #include <lvgl.h>
 
 LV_FONT_DECLARE(pacifico_64);
-LV_FONT_DECLARE(pacifico_28);
 
 namespace face_boot {
 
@@ -32,7 +31,7 @@ static constexpr uint32_t LETTER_FADE_MS    = 520;   // per-letter draw duration
 static constexpr uint32_t LETTERS_DONE_MS   = LETTER_DELAY * 6 + LETTER_FADE_MS;
 static constexpr uint32_t TAG_START_MS      = LETTERS_DONE_MS + 350;
 static constexpr uint32_t TAG_FADE_MS       = 900;
-static constexpr uint32_t HOLD_END_MS       = TAG_START_MS + TAG_FADE_MS + 2200;
+static constexpr uint32_t HOLD_END_MS       = TAG_START_MS + TAG_FADE_MS + 4200;
 static constexpr uint32_t FADEOUT_MS        = 900;
 static constexpr uint32_t TOTAL_MS          = HOLD_END_MS + FADEOUT_MS;
 
@@ -67,12 +66,12 @@ void create() {
         lv_label_set_text(s_letters[i], LETTERS[i]);
     }
 
-    // ── tagline below ──
+    // ── tagline below: clean Montserrat to contrast with script hero ──
     s_tag = lv_label_create(s_scr);
-    lv_obj_set_style_text_font(s_tag, &pacifico_28, 0);
-    lv_obj_set_style_text_color(s_tag, lv_color_hex(0xE6E6E6), 0);
+    lv_obj_set_style_text_font(s_tag, &lv_font_montserrat_24, 0);
+    lv_obj_set_style_text_color(s_tag, lv_color_hex(0xCFCFCF), 0);
     lv_obj_set_style_text_opa(s_tag, LV_OPA_TRANSP, 0);
-    lv_label_set_text(s_tag, "Stanley, papa loves you, forever");
+    lv_label_set_text(s_tag, "Papa loves you, forever");
     lv_obj_align(s_tag, LV_ALIGN_CENTER, 0, 85);
 
     s_start_ms = millis();

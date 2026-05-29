@@ -72,8 +72,7 @@ bool syncTime(uint32_t timeout_ms) {
         return false;
     }
 
-    showStatus("Sync time", "ntp.aliyun.com", TFT_WHITE);
-
+    // (suppressed status overlay — keeps the boot screen clean)
     // UTC base; configTime(gmt_offset, dst_offset, servers...)
     // China-mainland-friendly servers first, then global pool as fallback.
     configTime(0, 0,
@@ -88,20 +87,14 @@ bool syncTime(uint32_t timeout_ms) {
             writeToRtc();
             struct tm utc;
             gmtime_r(&now, &utc);
-            char line2[32];
-            snprintf(line2, sizeof(line2), "%02d:%02d:%02d UTC",
-                     utc.tm_hour, utc.tm_min, utc.tm_sec);
-            showStatus("Time synced", line2, 0x07E0);   // green
-            Serial.printf("[ntp] synced UTC: %04d-%02d-%02d %s\n",
-                          utc.tm_year+1900, utc.tm_mon+1, utc.tm_mday, line2);
-            delay(900);
+            Serial.printf("[ntp] synced UTC: %04d-%02d-%02d %02d:%02d:%02d\n",
+                          utc.tm_year+1900, utc.tm_mon+1, utc.tm_mday,
+                          utc.tm_hour, utc.tm_min, utc.tm_sec);
             return true;
         }
         delay(100);
     }
-    showStatus("Time sync", "timeout (using fallback)", 0xFD20);
     Serial.println("[ntp] timeout");
-    delay(1200);
     return false;
 }
 

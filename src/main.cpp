@@ -52,7 +52,7 @@ enum DadStatus { DAD_AWAKE, DAD_WORKING, DAD_SLEEPING, DAD_HEART };
 
 // ── interaction tuning ───────────────────────────────────
 static constexpr uint32_t HOLD_ARM_MS        = 700;       // long-press threshold
-static constexpr int      HOLD_MAX_DRIFT_PX2 = 40 * 40;   // cancel if finger drifts > 40 px
+static constexpr int      HOLD_MAX_DRIFT_PX2 = 80 * 80;   // cancel if finger drifts > 80 px AFTER armed
 static constexpr uint32_t RECV_TOTAL_MS      = 3420;      // matches drawBloomHeart timeline
 static constexpr uint32_t SEND_TOTAL_MS      = 1250;      // matches drawSendHeart timeline
 
@@ -74,6 +74,9 @@ static int      s_send_y        = 234;
 
 // debug status override (BtnB cycles)
 static int      s_dbg_status_cycle = 0;
+
+// unread message counter: bumped on every received heart, cleared by short-tap
+static int      s_unread_count = 0;
 
 // ── heart geometry ───────────────────────────────────────
 // Draws a real heart shape (two filled circles + smooth triangle).
@@ -473,6 +476,7 @@ void setup() {
 
         hapticHeartbeat();
         chimeReceive();
+        s_unread_count++;
 
         // Show the note if it's pure ASCII (DSEG14 only has uppercase Latin + digits).
         // CJK note text will land in a later OTA push once we ship a CJK font.
@@ -513,55 +517,6 @@ void setup() {
 
 void loop() {
     M5.update();
-    auto t = M5.Touch.getDetail();
-
-    // ── touch hold → arm → release → send heart ──────────
-    if (t.wasPressed()) {
-        s_hold_start_ms = millis();
-        s_hold_start_x  = t.x;
-        s_hold_start_y  = t.y;
-        s_hold_armed    = false;
-    }
-    if (s_hold_start_ms && t.isPressed()) {
-        int dx = t.x - s_hold_start_x;
-        int dy = t.y - s_hold_start_y;
-        if (dx*dx + dy*dy > HOLD_MAX_DRIFT_PX2) {
-            s_hold_start_ms = 0;          // cancel: finger drifted too far
-            s_hold_armed    = false;
-        } else if (!s_hold_armed && millis() - s_hold_start_ms >= HOLD_ARM_MS) {
-            s_hold_armed = true;
-            hapticClick();                 // armed confirmation
-        }
-    }
-    if (t.wasReleased() && s_hold_start_ms) {
-        uint32_t held = millis() - s_hold_start_ms;
-        if (held >= HOLD_ARM_MS) {
-            s_send_heart_ms = millis();
-            s_send_x = s_hold_start_x;
-            s_send_y = s_hold_start_y;
-            hapticPulse();
-            Serial.printf("[heart] sent (%d,%d) held=%ums\n",
-                          s_send_x, s_send_y, held);
-            // TODO(MQTT): publish heartbeat to dad's end here
-        } else {
-            Serial.printf("[heart] cancel: %ums < %ums needed\n", held, HOLD_ARM_MS);
-        }
-        s_hold_start_ms = 0;
-        s_hold_armed    = false;
-    }
-
-    // ── BtnA: simulate "dad sent a heart" (until MQTT is wired) ──
-    if (M5.BtnA.wasPressed()) {
-        s_recv_heart_ms = millis();
-        Serial.println("[test] simulated incoming heart from dad");
-        hapticHeartbeat();
-    }
-    // ── BtnB: cycle dad's status for visual check ──
-    if (M5.BtnB.wasPressed()) {
-        s_dbg_status_cycle = (s_dbg_status_cycle + 1) % 4;
-        Serial.printf("[test] dad status override = %d\n", s_dbg_status_cycle);
-        s_last_tick_sec = -1;
-    }
 
     // ── LVGL drives the panel; we just feed the tick and refresh the face once/sec ──
     lvgl_port::tick();
@@ -590,12 +545,17 @@ void loop() {
         s_hold_armed    = false;
     }
     if (s_hold_start_ms && tt2.isPressed()) {
-        int dx = tt2.x - s_hold_start_x;
-        int dy = tt2.y - s_hold_start_y;
-        if (dx*dx + dy*dy > HOLD_MAX_DRIFT_PX2) {
-            s_hold_start_ms = 0;
-            s_hold_armed    = false;
-        } else if (!s_hold_armed && millis() - s_hold_start_ms >= HOLD_ARM_MS) {
+        // Only enforce drift-cancel AFTER the hold is armed. Before that, a
+        // brief tap that wobbles a few dozen pixels must still register on
+        // release — otherwise short taps to clear unread badge get eaten.
+        if (s_hold_armed) {
+            int dx = tt2.x - s_hold_start_x;
+            int dy = tt2.y - s_hold_start_y;
+            if (dx*dx + dy*dy > HOLD_MAX_DRIFT_PX2) {
+                s_hold_start_ms = 0;
+                s_hold_armed    = false;
+            }
+        } else if (millis() - s_hold_start_ms >= HOLD_ARM_MS) {
             s_hold_armed = true;
             hapticClick();
             face_lcd::showAlert("ARMED", 0xFD20, 700);
@@ -608,6 +568,16 @@ void loop() {
             hapticPulse();
             face_lcd::showAlert(ok ? "HEART SENT" : "NO NET", 0x42FF7E, 3000);
             Serial.printf("[heart] sent: %s held=%ums\n", ok ? "OK" : "FAIL", held);
+        } else if (s_unread_count > 0) {
+            // Short tap on watch face → mark all hearts as seen
+            Serial.printf("[unread] cleared %d (tap %ums)\n", s_unread_count, held);
+            s_unread_count = 0;
+            face_lcd::showAlert("READ", 0x42FF7E, 1200);
+            face_lcd::setStatus(WiFi.status() == WL_CONNECTED,
+                                heart_relay::isConnected(),
+                                s_unread_count);
+        } else {
+            Serial.printf("[tap] %ums no-op (no unread)\n", held);
         }
         s_hold_start_ms = 0;
         s_hold_armed    = false;
@@ -624,6 +594,10 @@ void loop() {
     if (tt.tm_sec != s_last_tick_sec) {
         s_last_tick_sec = tt.tm_sec;
         face_lcd::update();
+        face_lcd::setStatus(
+            WiFi.status() == WL_CONNECTED,
+            heart_relay::isConnected(),
+            s_unread_count);
     }
 
     delay(5);
