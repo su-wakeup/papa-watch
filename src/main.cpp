@@ -19,6 +19,8 @@
 #include "face_lcd.h"
 #include "heart_relay.h"
 #include "ota.h"
+#include <ArduinoJson.h>
+#include "audio/cow_moo.h"
 
 // OTA endpoint — real GitHub Releases now. Pushing a v*.*.* tag to the repo
 // triggers .github/workflows/release.yml, which uploads firmware.bin as an
@@ -166,6 +168,27 @@ static void hapticPulse() {     // "fired — heart is sent"
 static void hapticHeartbeat() { // "received — dad sent you one" (lub-dub)
     M5.Power.setVibration(200); delay(90);  M5.Power.setVibration(0); delay(110);
     M5.Power.setVibration(200); delay(90);  M5.Power.setVibration(0);
+}
+
+// Stanley's dad is Year-of-the-Ox. A real cow moo on heart-received.
+// Sample: Wikimedia Commons "Mudchute_cow_1.ogg" (mono, 2.19 s, decoded to
+// 16 kHz int16 PCM and baked into firmware as src/audio/cow_moo.h).
+static void chimeReceive() {
+    if (!M5.Speaker.isEnabled()) return;
+    M5.Speaker.setVolume(255);
+    bool ok = M5.Speaker.playRaw(cow_moo, cow_moo_n, cow_moo_sample_rate);
+    Serial.printf("[moo] playRaw real-sample ok=%d  samples=%u  rate=%d\n",
+                  (int)ok, (unsigned)cow_moo_n, cow_moo_sample_rate);
+}
+
+// Check if a string is pure ASCII (lets us decide whether to display the
+// dad-supplied note as-is or fall back to English while we don't have a CJK font).
+static bool isPureAscii(const char* s, size_t n) {
+    for (size_t i = 0; i < n; i++) {
+        unsigned char c = (unsigned char)s[i];
+        if (c < 0x20 || c > 0x7E) return false;
+    }
+    return true;
 }
 
 // ── helpers ──────────────────────────────────────────────
@@ -368,6 +391,16 @@ void setup() {
     M5.Display.setRotation(0);
     M5.Display.setBrightness(200);
 
+    // M5Unified's default speaker config for the StopWatch sets magnification=1,
+    // which makes everything inaudibly quiet through the tiny 1318 cavity speaker.
+    // Crank it up before any playback.
+    {
+        auto spkCfg = M5.Speaker.config();
+        spkCfg.magnification = 16;     // 24 distorted the 1318 cavity speaker
+        M5.Speaker.config(spkCfg);
+        M5.Speaker.begin();
+    }
+
     // off-screen canvas for flicker-free redraws
     s_face.setPsram(true);
     s_face.setColorDepth(16);
@@ -411,24 +444,60 @@ void setup() {
 
     // ── heartbeat relay over MQTT ──
     heart_relay::setOnReceive([](const char* payload, unsigned int len) {
-        // route by payload: {"cmd":"ota"} triggers an update check;
-        // anything else is treated as a heart from dad.
-        if (len < 96) {
-            char buf[97]; memcpy(buf, payload, len); buf[len] = 0;
-            if (strstr(buf, "\"cmd\":\"ota\"") || strstr(buf, "/ota")) {
-                Serial.println("[mqtt] OTA command received");
-                face_lcd::showAlert("UPDATING...", 0xFD20, 8000);
-                ota::checkAndUpdate(OTA_MANIFEST_URL, true);   // force=true → ignores semver
-                return;
-            }
+        JsonDocument doc;
+        DeserializationError err = deserializeJson(doc, payload, len);
+        if (err) {
+            Serial.printf("[heart] JSON parse error: %s\n", err.c_str());
+            hapticHeartbeat();
+            chimeReceive();
+            face_lcd::showAlert("DAD HEART", 0x90FFA6, 4000);
+            return;
         }
+
+        // OTA command: {"cmd":"ota"}
+        const char* cmd = doc["cmd"] | (const char*)nullptr;
+        if (cmd && strcmp(cmd, "ota") == 0) {
+            Serial.println("[mqtt] OTA command received");
+            face_lcd::showAlert("UPDATING...", 0xFD20, 8000);
+            ota::checkAndUpdate(OTA_MANIFEST_URL, true);
+            return;
+        }
+
+        // Heart payload: {"t":..,"from":"..","note":".."}
+        const char* note = doc["note"]  | "DAD HEART";
+        const char* from = doc["from"]  | "";
+
+        Serial.printf("[heart] from=%s note=%s\n", from, note);
+
         hapticHeartbeat();
-        face_lcd::showAlert("DAD HEART", 0x90FFA6, 4000);
-        Serial.println("[heart] received from dad");
+        chimeReceive();
+
+        // Show the note if it's pure ASCII (DSEG14 only has uppercase Latin + digits).
+        // CJK note text will land in a later OTA push once we ship a CJK font.
+        char alert_buf[40];
+        size_t note_len = strlen(note);
+        if (note_len > 0 && note_len < sizeof(alert_buf) - 1 && isPureAscii(note, note_len)) {
+            // upcase for DSEG14
+            for (size_t i = 0; i < note_len; i++) {
+                char c = note[i];
+                alert_buf[i] = (c >= 'a' && c <= 'z') ? (c - 'a' + 'A') : c;
+            }
+            alert_buf[note_len] = 0;
+            face_lcd::showAlert(alert_buf, 0x90FFA6, 5000);
+        } else {
+            face_lcd::showAlert("DAD HEART", 0x90FFA6, 4000);
+        }
     });
     heart_relay::begin("stanley-dad-2026");
 
     Serial.printf("[ota] firmware v%s\n", ota::FIRMWARE_VERSION);
+
+    // ── boot beep: prove speaker output works ──
+    Serial.printf("[spk] enabled=%d  vol=%d\n",
+                  M5.Speaker.isEnabled(), M5.Speaker.getVolume());
+    M5.Speaker.setVolume(220);
+    M5.Speaker.tone(2000, 300);
+    Serial.println("[spk] beep dispatched (2000Hz 300ms)");
 
     Serial.printf("[boot] display %dx%d  PSRAM=%uKB  free=%uKB\n",
                   M5.Display.width(), M5.Display.height(),
