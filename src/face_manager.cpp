@@ -84,4 +84,17 @@ void update() {
 
 int currentIndex() { return s_active_idx; }
 
+void destroy() {
+    // Tear down each child face so its statics go nullptr (their update()s
+    // short-circuit on s_root==nullptr). Then nuke the tileview tree.
+    face_lcd::destroy();
+    face_mech::destroy();
+    face_term::destroy();
+    if (s_tileview) {
+        lv_obj_del(s_tileview);
+        s_tileview = nullptr;
+    }
+    for (int i = 0; i < N_FACES; i++) s_tiles[i] = nullptr;
+}
+
 }  // namespace face_manager

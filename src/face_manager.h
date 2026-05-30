@@ -14,6 +14,7 @@
 namespace face_manager {
 
 void create();
+void destroy();         // teardown for app exit — clears screen + nulls children
 void update();          // forwards refresh to the active face
 int  currentIndex();
 

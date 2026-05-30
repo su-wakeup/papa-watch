@@ -23,6 +23,8 @@
 #include "face_mech.h"
 #include "heart_overlay.h"
 #include "steps.h"
+#include "app.h"
+#include "app_launcher.h"
 #include "dad_status.h"
 #include "heart_relay.h"
 #include "ota.h"
@@ -555,13 +557,15 @@ void loop() {
     heart_relay::tick();
     steps::update();
 
-    // Boot greeting first; switch to the watch face when it's done.
+    // Boot greeting first; then land on the launcher (v0.9.0 — was face_manager
+    // pre-launcher). The launcher's "Watch" cell still routes to face_manager,
+    // so the path to time is two taps from cold boot.
     static bool s_boot_done = false;
     if (!s_boot_done) {
         face_boot::update();
         if (face_boot::finished()) {
             face_boot::destroy();
-            face_manager::create();
+            app_runtime::switch_to(g_apps[0]);   // [0] = APP_LAUNCHER
             heart_overlay::create();
             s_boot_done = true;
         }
@@ -569,6 +573,7 @@ void loop() {
         return;
     }
     heart_overlay::update();
+    app_runtime::tick();
 
     // ── touch hold → arm → release → send heart to dad ──
     auto tt2 = M5.Touch.getDetail();
@@ -617,10 +622,37 @@ void loop() {
         s_hold_armed    = false;
     }
 
-    // BtnA: simulate receiving (no MQTT round-trip needed for local test)
-    if (M5.BtnA.wasPressed()) {
-        hapticHeartbeat();
-        face_lcd::showAlert("DAD HEART (sim)", 0x90FFA6, 3000);
+    // ── A / B / A+B buttons ────────────────────────────────────────────
+    //   on launcher:  A solo → rotate left,  B solo → rotate right
+    //   in any app:   A+B simultaneous → back to launcher
+    //
+    // Combo detection: as soon as both buttons are seen held simultaneously
+    // we latch s_combo_fired and run the back-action exactly once. Individual
+    // wasReleased() events during the same hold get suppressed so the user
+    // doesn't get a stray rotation when they let A go a few ms before B.
+    {
+        static bool s_combo_fired = false;
+        bool a_held = M5.BtnA.isPressed();
+        bool b_held = M5.BtnB.isPressed();
+
+        if (a_held && b_held && !s_combo_fired) {
+            s_combo_fired = true;
+            if (app_runtime::current() != g_apps[0]) {
+                app_runtime::back_to_launcher();
+            }
+        }
+
+        if (M5.BtnA.wasReleased() && !s_combo_fired) {
+            if (app_runtime::current() == g_apps[0]) {
+                app_launcher::rotate_left();
+            }
+        }
+        if (M5.BtnB.wasReleased() && !s_combo_fired) {
+            if (app_runtime::current() == g_apps[0]) {
+                app_launcher::rotate_right();
+            }
+        }
+        if (!a_held && !b_held) s_combo_fired = false;
     }
 
     time_t now = time(nullptr);
@@ -628,7 +660,10 @@ void loop() {
     if (tt.tm_sec != s_last_tick_sec) {
         s_last_tick_sec = tt.tm_sec;
         steps::resetIfNewDay();
-        face_manager::update();
+        // face_manager::update() is now driven by app_runtime::tick() above —
+        // the Watch app's tick trampoline forwards to it. Status writes below
+        // are no-ops on faces whose s_root is null, so they're safe to keep
+        // calling regardless of which app is active.
         face_lcd::setStatus(
             WiFi.status() == WL_CONNECTED,
             heart_relay::isConnected(),

@@ -25,3 +25,6 @@ assets/dseg/fonts-DSEG_v046/DSEG14-Modern-MINI*
 assets/dseg/fonts-DSEG_v046/DSEG7-7SEGG-CHAN*
 assets/dseg/fonts-DSEG_v046/documents*
 assets/dseg/fonts-DSEG_v046/sample*
+
+# npm dev tools (lv_font_conv) — package.json pins the deps
+node_modules/
