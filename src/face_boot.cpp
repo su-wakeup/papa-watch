@@ -58,12 +58,14 @@ void create() {
         lv_obj_set_style_text_font(s_letters[i], &pacifico_64, 0);
         lv_obj_set_style_text_color(s_letters[i], lv_color_hex(HUES[i]), 0);
         lv_obj_set_style_text_opa(s_letters[i], LV_OPA_TRANSP, 0);
-        // Pivot at the left edge so the scale-X animation expands the glyph
-        // rightward, mimicking a brush stroke being drawn.
-        lv_obj_set_style_transform_pivot_x(s_letters[i], 0, 0);
-        lv_obj_set_style_transform_pivot_y(s_letters[i], 50, 0);
-        lv_obj_set_style_transform_scale_x(s_letters[i], 0, 0);
         lv_label_set_text(s_letters[i], LETTERS[i]);
+        // NB: we INTENTIONALLY don't use transform_scale_x for the "stroke
+        // draw" effect. Transforming text forces LVGL to render to an
+        // off-screen buffer (~38KB per letter at this font size). With our
+        // ~95KB internal LVGL pool, animating 3+ letters simultaneously
+        // overflows the pool and the later letters silently fail to render
+        // (boot animation appears to "stop at Sta"). Plain opacity ramp is
+        // visually similar (left-to-right appearance) and costs zero buffer.
     }
 
     // ── tagline below: clean Montserrat to contrast with script hero ──
@@ -74,7 +76,11 @@ void create() {
     lv_label_set_text(s_tag, "Papa loves you, forever");
     lv_obj_align(s_tag, LV_ALIGN_CENTER, 0, 85);
 
-    s_start_ms = millis();
+    // Don't capture start time here — setup() does a lot more work (NTP, MQTT
+    // bootstrap, etc.) before loop() gets a chance to actually render. If we
+    // started counting now, by first render we'd already be 1-2s in and the
+    // letters would pop out half-drawn. Capture in update() on first frame.
+    s_start_ms = 0;
     s_done = false;
 }
 
@@ -85,29 +91,26 @@ static inline lv_opa_t lerpOpa(uint32_t t, uint32_t dur) {
 
 void update() {
     if (s_done || !s_scr) return;
+    if (s_start_ms == 0) {           // first frame — start the clock now
+        s_start_ms = millis();
+        return;
+    }
     uint32_t t = millis() - s_start_ms;
 
-    // Letter "stroke draw" (staggered): horizontal scale grows 0 → 100% from
-    // the left edge, opacity ramps up alongside it. Eased so the start is
-    // slower (mimics pen lift) and the end is firmer.
+    // Per-letter staggered opacity ramp (left-to-right appearance). Eased
+    // out so each letter "lands" rather than linearly fades.
     for (int i = 0; i < 7; i++) {
         uint32_t start = i * LETTER_DELAY;
-        int32_t  scale;
         lv_opa_t opa;
         if (t < start) {
-            scale = 0;
-            opa   = LV_OPA_TRANSP;
+            opa = LV_OPA_TRANSP;
         } else if (t < start + LETTER_FADE_MS) {
             float p = (float)(t - start) / LETTER_FADE_MS;
-            // ease-out: faster at the end so the letter "lands"
             float eased = 1.0f - (1.0f - p) * (1.0f - p);
-            scale = (int32_t)(256.0f * eased);
-            opa   = (lv_opa_t)(255.0f * eased);
+            opa = (lv_opa_t)(255.0f * eased);
         } else {
-            scale = 256;
-            opa   = LV_OPA_COVER;
+            opa = LV_OPA_COVER;
         }
-        lv_obj_set_style_transform_scale_x(s_letters[i], scale, 0);
         lv_obj_set_style_text_opa(s_letters[i], opa, 0);
     }
 

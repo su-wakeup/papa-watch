@@ -16,5 +16,6 @@ namespace face_mech {
 void create(lv_obj_t* parent);
 void update();
 void destroy();
+void setUnread(int n);
 
 }  // namespace face_mech

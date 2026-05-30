@@ -9,6 +9,7 @@
 //   bottom bezel     "DUAL TIME WORLD"
 
 #include "face_lcd.h"
+#include "dad_status.h"
 #include <Arduino.h>
 #include <lvgl.h>
 #include <time.h>
@@ -55,6 +56,9 @@ static lv_obj_t* s_brand_bot  = nullptr;
 static lv_obj_t* s_wifi_dot   = nullptr;
 static lv_obj_t* s_mqtt_dot   = nullptr;
 static lv_obj_t* s_unread_lbl = nullptr;
+
+// dad-state line below the dad row
+static lv_obj_t* s_dad_state  = nullptr;
 
 // alert state (heart sent / received)
 static uint32_t  s_alert_until    = 0;
@@ -142,11 +146,13 @@ void create(lv_obj_t* parent) {
     lv_obj_set_style_line_width(s_div_line, 1, 0);
     lv_obj_align(s_div_line, LV_ALIGN_CENTER, 0, 110);
 
-    // ── dad row: "DAD PEK" + dual-time digits ──
-    s_dad_lbl  = mk_label("DAD PEK", &dseg14_modern_20, COL_DIM,
-                          LV_ALIGN_CENTER, -90, 140);
-    s_dad_time = mk_label("00:00",   &dseg7_modern_36,  COL_DIM,
-                          LV_ALIGN_CENTER, 50, 140);
+    // ── dad row: "DAD PEK" + dual-time digits + state ──
+    s_dad_lbl   = mk_label("DAD PEK", &dseg14_modern_20, COL_DIM,
+                           LV_ALIGN_CENTER, -90, 140);
+    s_dad_time  = mk_label("00:00",   &dseg7_modern_36,  COL_DIM,
+                           LV_ALIGN_CENTER, 50, 140);
+    s_dad_state = mk_label("AWAKE",   &dseg14_modern_20, COL_LIT,
+                           LV_ALIGN_CENTER, 0, 175);
 
     // ── bottom bezel: brand-line ──
     s_brand_bot = mk_label("DUAL TIME WORLD", &dseg14_modern_20, COL_RIM,
@@ -196,6 +202,11 @@ void update() {
     struct tm dad; localtime_r(&now, &dad);
     snprintf(buf, sizeof(buf), "%02d:%02d", dad.tm_hour, dad.tm_min);
     lv_label_set_text(s_dad_time, buf);
+
+    dad_status::State st = dad_status::current(dad.tm_hour);
+    lv_label_set_text(s_dad_state, dad_status::label(st));
+    lv_obj_set_style_text_color(s_dad_state,
+                                lv_color_hex(dad_status::color(st)), 0);
 
     // alert: expire and restore bezel-bottom branding when time's up
     if (s_alert_until && millis() >= s_alert_until) {

@@ -37,9 +37,12 @@ static void touch_cb(lv_indev_t* indev, lv_indev_data_t* data) {
 bool begin(int w, int h) {
     lv_init();
 
-    // partial buffer: 80 rows × W × 2 bytes (RGB565), in PSRAM
-    constexpr int LINES = 80;
-    size_t buf_bytes = (size_t)w * LINES * sizeof(uint16_t);
+    // Full-screen RGB565 buffer in PSRAM. Two buffers (~438KB each at 468²)
+    // so LVGL can render frame N+1 into one while we're SPI-pushing frame N
+    // from the other. The 80-line partial buffer we had before caused visible
+    // top-to-bottom banding during tile swipe — one push per slice, six per
+    // frame. With full buffers, each flush is atomic to the eye.
+    size_t buf_bytes = (size_t)w * h * sizeof(uint16_t);
 
     s_buf1 = (uint8_t*)heap_caps_aligned_alloc(16, buf_bytes, MALLOC_CAP_SPIRAM);
     s_buf2 = (uint8_t*)heap_caps_aligned_alloc(16, buf_bytes, MALLOC_CAP_SPIRAM);
@@ -51,7 +54,7 @@ bool begin(int w, int h) {
     s_disp = lv_display_create(w, h);
     lv_display_set_color_format(s_disp, LV_COLOR_FORMAT_RGB565);
     lv_display_set_buffers(s_disp, s_buf1, s_buf2, buf_bytes,
-                           LV_DISPLAY_RENDER_MODE_PARTIAL);
+                           LV_DISPLAY_RENDER_MODE_FULL);
     lv_display_set_flush_cb(s_disp, flush_cb);
 
     s_indev = lv_indev_create();

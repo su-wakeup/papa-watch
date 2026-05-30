@@ -20,11 +20,15 @@
 #include "face_lcd.h"
 #include "face_manager.h"
 #include "face_term.h"
+#include "face_mech.h"
 #include "heart_overlay.h"
+#include "steps.h"
+#include "dad_status.h"
 #include "heart_relay.h"
 #include "ota.h"
 #include <ArduinoJson.h>
 #include "audio/cow_moo.h"
+#include "assets/boot_jingle.h"
 
 // OTA endpoint — real GitHub Releases now. Pushing a v*.*.* tag to the repo
 // triggers .github/workflows/release.yml, which uploads firmware.bin as an
@@ -471,6 +475,22 @@ void setup() {
             return;
         }
 
+        // Status override: {"cmd":"status","value":"free|busy|away|thinking|auto"}
+        if (cmd && strcmp(cmd, "status") == 0) {
+            const char* val = doc["value"] | "auto";
+            dad_status::setOverride(val, 6);   // 6-hour window
+            char alert[24] = "DAD ";
+            for (size_t i = 0; val[i] && i < 18; i++) {
+                char c = val[i];
+                alert[i + 4] = (c >= 'a' && c <= 'z') ? (c - 'a' + 'A') : c;
+                alert[i + 5] = 0;
+            }
+            face_lcd::showAlert(alert,
+                dad_status::color(dad_status::current(0)),
+                3000);
+            return;
+        }
+
         // Heart payload: {"t":..,"from":"..","note":".."}
         const char* note = doc["note"]  | "DAD HEART";
         const char* from = doc["from"]  | "";
@@ -503,9 +523,16 @@ void setup() {
     // ── boot beep: prove speaker output works ──
     Serial.printf("[spk] enabled=%d  vol=%d\n",
                   M5.Speaker.isEnabled(), M5.Speaker.getVolume());
-    M5.Speaker.setVolume(220);
-    M5.Speaker.tone(2000, 300);
-    Serial.println("[spk] beep dispatched (2000Hz 300ms)");
+    // Boot jingle: pre-synthesized "coins falling" PCM (FM-bell synthesis,
+    // 1.7s @ 16kHz int16 mono, ~53KB in flash). Square-wave tone() can't make
+    // a real metallic timbre because it has no inharmonic partials — coins
+    // need the FM synthesis baked into the asset.
+    M5.Speaker.setVolume(180);
+    M5.Speaker.playRaw(boot_jingle_data, boot_jingle_samples,
+                       boot_jingle_sample_rate);
+    delay(boot_jingle_samples * 1000UL / boot_jingle_sample_rate + 50);
+    Serial.printf("[spk] coin jingle dispatched (%u samples @ %u Hz)\n",
+                  (unsigned)boot_jingle_samples, boot_jingle_sample_rate);
 
     Serial.printf("[boot] display %dx%d  PSRAM=%uKB  free=%uKB\n",
                   M5.Display.width(), M5.Display.height(),
@@ -514,6 +541,9 @@ void setup() {
     Serial.printf("[boot] IMU=%d RTC=%d TOUCH=%d SPK=%d\n",
                   M5.Imu.isEnabled(), M5.Rtc.isEnabled(),
                   M5.Touch.isEnabled(), M5.Speaker.isEnabled());
+
+    steps::init();
+
     Serial.println("=======================================");
 }
 
@@ -523,6 +553,7 @@ void loop() {
     // ── LVGL drives the panel; we just feed the tick and refresh the face once/sec ──
     lvgl_port::tick();
     heart_relay::tick();
+    steps::update();
 
     // Boot greeting first; switch to the watch face when it's done.
     static bool s_boot_done = false;
@@ -596,12 +627,14 @@ void loop() {
     struct tm tt; localtime_r(&now, &tt);
     if (tt.tm_sec != s_last_tick_sec) {
         s_last_tick_sec = tt.tm_sec;
+        steps::resetIfNewDay();
         face_manager::update();
         face_lcd::setStatus(
             WiFi.status() == WL_CONNECTED,
             heart_relay::isConnected(),
             s_unread_count);
         face_term::setUnread(s_unread_count);
+        face_mech::setUnread(s_unread_count);
     }
 
     delay(5);

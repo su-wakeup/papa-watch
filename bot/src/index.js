@@ -130,6 +130,11 @@ const HELP = [
     "/heart           send a heart (default ❤)",
     "/heart 💕         send with custom emoji",
     "/heart 想你了    send with text (will display on watch as alert)",
+    "/status free     set dad state on Stanley's face (6h)",
+    "/status busy",
+    "/status away",
+    "/status thinking",
+    "/status auto     clear override, back to time-based auto",
     "/ota             trigger firmware update check",
     "/help            this message",
 ].join("\n");
@@ -179,6 +184,27 @@ async function handleTelegram(update, env) {
         try {
             await publishMqtt(env.MQTT_BROKER_WSS, topic, JSON.stringify({ cmd: "ota" }));
             await telegramSend(env.TELEGRAM_BOT_TOKEN, chatId, "⚙️ OTA check triggered");
+        } catch (e) {
+            await telegramSend(env.TELEGRAM_BOT_TOKEN, chatId, `failed: ${e.message}`);
+        }
+        return;
+    }
+
+    if (text === "/status" || text.startsWith("/status ")) {
+        const arg = text.slice(7).trim().toLowerCase();
+        const valid = ["free", "busy", "away", "thinking", "auto"];
+        if (!arg || !valid.includes(arg)) {
+            await telegramSend(env.TELEGRAM_BOT_TOKEN, chatId,
+                `usage: /status [${valid.join("|")}]`);
+            return;
+        }
+        try {
+            await publishMqtt(env.MQTT_BROKER_WSS, topic,
+                JSON.stringify({ cmd: "status", value: arg }));
+            await telegramSend(env.TELEGRAM_BOT_TOKEN, chatId,
+                arg === "auto"
+                    ? "🕒 status → auto (clears override)"
+                    : `✨ status → ${arg.toUpperCase()} (6h)`);
         } catch (e) {
             await telegramSend(env.TELEGRAM_BOT_TOKEN, chatId, `failed: ${e.message}`);
         }

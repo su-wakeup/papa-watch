@@ -445,8 +445,8 @@ bool tryAutoConnect(uint32_t timeout_ms) {
     if (!loadCreds(ssid, pass)) return false;
     Serial.printf("[wifi] auto-connect saved: %s\n", ssid.c_str());
 
-    ensureCanvas();
-    drawStatusOverlay("Connecting", ssid.c_str());
+    // No on-screen "Connecting..." text — boot should go straight from black
+    // to the Hello animation; user found the technical status noisy.
 
     WiFi.mode(WIFI_STA);
     WiFi.begin(ssid.c_str(), pass.c_str());

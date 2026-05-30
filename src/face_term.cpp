@@ -1,4 +1,5 @@
 #include "face_term.h"
+#include "dad_status.h"
 #include <Arduino.h>
 #include <WiFi.h>
 #include <lvgl.h>
@@ -167,15 +168,11 @@ void update() {
     snprintf(buf, sizeof(buf), "%02d:%02d", dad.tm_hour, dad.tm_min);
     lv_label_set_text(s_dad_time, buf);
 
-    // dad state by hour
-    int h = dad.tm_hour;
-    const char* state;
-    uint32_t state_col;
-    if (h >= 23 || h < 7)      { state = "SLEEPING"; state_col = COL_AMBER; }
-    else if (h >= 9 && h < 18) { state = "WORKING";  state_col = COL_OK;    }
-    else                        { state = "ONLINE";   state_col = COL_OK;    }
-    lv_label_set_text(s_dad_state, state);
-    lv_obj_set_style_text_color(s_dad_state, lv_color_hex(state_col), 0);
+    // dad state via shared dad_status (auto by Beijing hour + Telegram override)
+    dad_status::State st = dad_status::current(dad.tm_hour);
+    lv_label_set_text(s_dad_state, dad_status::label(st));
+    lv_obj_set_style_text_color(s_dad_state,
+                                lv_color_hex(dad_status::color(st)), 0);
 
     // unread count
     snprintf(buf, sizeof(buf), "%d", s_unread);

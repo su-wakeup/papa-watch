@@ -38,20 +38,30 @@ def find_descriptor(text: str):
     )
 
 
-def rgb565_to_argb8888(raw_interleaved: bytes) -> bytes:
-    """Convert (color_lo, color_hi, alpha) per pixel to ARGB8888 (B, G, R, A)."""
+def rgb565_to_argb8888(raw_interleaved: bytes, has_alpha: bool) -> bytes:
+    """Convert per-pixel data to ARGB8888 (B, G, R, A).
+       has_alpha=True  → input is 3 bytes/px (color_lo, color_hi, alpha)
+       has_alpha=False → input is 2 bytes/px (color_hi, color_lo); LVGL 8 TRUE_COLOR
+                        (no-alpha) is stored as big-endian RGB565 even with
+                        LV_COLOR_16_SWAP=1, unlike TRUE_COLOR_ALPHA"""
     out = bytearray()
-    for i in range(0, len(raw_interleaved), 3):
-        lo, hi, alpha = raw_interleaved[i], raw_interleaved[i + 1], raw_interleaved[i + 2]
+    step = 3 if has_alpha else 2
+    for i in range(0, len(raw_interleaved), step):
+        if has_alpha:
+            lo, hi = raw_interleaved[i], raw_interleaved[i + 1]
+            alpha = raw_interleaved[i + 2]
+        else:
+            # observed: non-alpha source stores (hi, lo) — swap to read correctly
+            hi, lo = raw_interleaved[i], raw_interleaved[i + 1]
+            alpha = 255
         rgb565 = lo | (hi << 8)
         r5 = (rgb565 >> 11) & 0x1F
         g6 = (rgb565 >> 5) & 0x3F
         b5 = rgb565 & 0x1F
-        # expand 5/6/5 to 8/8/8 via bit-replication
         r8 = (r5 << 3) | (r5 >> 2)
         g8 = (g6 << 2) | (g6 >> 4)
         b8 = (b5 << 3) | (b5 >> 2)
-        out += bytes((b8, g8, r8, alpha))   # LVGL 9 ARGB8888 in-memory layout
+        out += bytes((b8, g8, r8, alpha))
     return bytes(out)
 
 
@@ -72,10 +82,12 @@ def port(text: str) -> str:
         raise SystemExit("could not find *_data array")
     prefix, body, tail = data_m.group(1), data_m.group(2), data_m.group(3)
     raw = parse_hex_bytes(body)
-    if len(raw) != w * h * 3:
-        sys.stderr.write(f"warning: raw {len(raw)} != expected {w*h*3}\n")
-
-    argb = rgb565_to_argb8888(raw)
+    # detect whether image has per-pixel alpha by comparing data length
+    has_alpha = (len(raw) == w * h * 3)
+    if not has_alpha and len(raw) != w * h * 2:
+        sys.stderr.write(
+            f"warning: raw {len(raw)} bytes != 2*W*H ({w*h*2}) or 3*W*H ({w*h*3})\n")
+    argb = rgb565_to_argb8888(raw, has_alpha)
     new_body = "\n" + emit_bytes(argb) + "\n"
 
     out = text.replace(prefix + body + tail, prefix + new_body + tail)
