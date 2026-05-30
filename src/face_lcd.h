@@ -5,11 +5,14 @@
 #pragma once
 #include <stdint.h>
 
+struct _lv_obj_t;
+typedef struct _lv_obj_t lv_obj_t;
+
 namespace face_lcd {
 
-void create();
-void update();          // refresh once per second
-void destroy();         // tear down when switching faces
+void create(lv_obj_t* parent);   // build widgets as children of `parent`
+void update();                   // refresh once per second
+void destroy();                  // tear down (caller owns parent)
 void showAlert(const char* text, uint32_t color_hex, uint32_t duration_ms);
 void setStatus(bool wifi_up, bool mqtt_up, int unread_count);
 

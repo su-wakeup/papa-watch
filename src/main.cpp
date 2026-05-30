@@ -18,6 +18,7 @@
 #include "lvgl_port.h"
 #include "face_boot.h"
 #include "face_lcd.h"
+#include "face_manager.h"
 #include "heart_relay.h"
 #include "ota.h"
 #include <ArduinoJson.h>
@@ -528,8 +529,7 @@ void loop() {
         face_boot::update();
         if (face_boot::finished()) {
             face_boot::destroy();
-            face_lcd::create();
-            face_lcd::update();
+            face_manager::create();
             s_boot_done = true;
         }
         delay(5);
@@ -593,7 +593,7 @@ void loop() {
     struct tm tt; localtime_r(&now, &tt);
     if (tt.tm_sec != s_last_tick_sec) {
         s_last_tick_sec = tt.tm_sec;
-        face_lcd::update();
+        face_manager::update();
         face_lcd::setStatus(
             WiFi.status() == WL_CONNECTED,
             heart_relay::isConnected(),

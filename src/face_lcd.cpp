@@ -71,8 +71,8 @@ static lv_obj_t* mk_label(const char* text, const lv_font_t* font,
     return l;
 }
 
-void create() {
-    s_scr = lv_screen_active();
+void create(lv_obj_t* parent) {
+    s_scr = parent;
     lv_obj_clean(s_scr);
     lv_obj_set_style_bg_color(s_scr, lv_color_hex(COL_BG), 0);
     lv_obj_set_style_bg_opa(s_scr, LV_OPA_COVER, 0);
@@ -236,7 +236,7 @@ void showAlert(const char* text, uint32_t color_hex, uint32_t duration_ms) {
 }
 
 void destroy() {
-    if (s_scr) lv_obj_clean(s_scr);
+    if (s_scr) lv_obj_clean(s_scr);   // wipe widgets only; parent is owned by caller
     s_scr = nullptr;
     for (int i = 0; i < 7; i++) s_days[i] = nullptr;
     s_brand_top = s_alm = s_am = s_pm = nullptr;

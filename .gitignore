@@ -5,6 +5,9 @@
 *.elf
 *.map
 
+# Reference materials (not part of firmware build, kept locally)
+assets/reference/
+
 # OTA test artifacts
 assets/dseg.zip
 
