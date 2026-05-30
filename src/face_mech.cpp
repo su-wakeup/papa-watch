@@ -196,7 +196,7 @@ void create(lv_obj_t* parent) {
     lv_obj_set_style_text_font(s_steps_icon, &mont_light_24, 0);
     lv_obj_set_style_text_color(s_steps_icon, lv_color_hex(0xB88860), 0);
     lv_label_set_text(s_steps_icon, "\xEF\x95\x8B");
-    lv_obj_align(s_steps_icon, LV_ALIGN_CENTER, -95, 40);
+    lv_obj_align(s_steps_icon, LV_ALIGN_CENTER, -95, 14);
 
     s_steps_lbl = lv_label_create(s_root);
     lv_obj_set_style_text_font(s_steps_lbl, &mont_light_24, 0);
