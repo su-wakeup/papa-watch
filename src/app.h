@@ -15,6 +15,12 @@ struct App {
     void (*enter)(lv_obj_t* parent);
     void (*leave)();
     void (*tick)();            // called once per main loop iteration while active
+    // Optional hardware-button callbacks. main.cpp dispatches A/B solo releases
+    // here (after suppressing combo events). Either may be nullptr — in that
+    // case the press is a no-op for this app. The A+B combo is always
+    // hard-wired to back-to-launcher and not exposed to apps.
+    void (*on_button_a)();
+    void (*on_button_b)();
 };
 
 extern const App* const g_apps[];

@@ -5,29 +5,38 @@
 #include "app.h"
 #include "app_launcher.h"
 #include "app_stub.h"
+#include "app_stopwatch.h"
 #include "face_manager.h"
 #include <lvgl.h>
 
 // ── per-app enter/leave/tick trampolines ─────────────────────────────────
 
-static void launcher_enter(lv_obj_t* p) { app_launcher::enter(p); }
+static void launcher_enter(lv_obj_t* p)  { app_launcher::enter(p); }
 static void launcher_leave()             { app_launcher::leave(); }
 static void launcher_tick()              { app_launcher::tick(); }
+static void launcher_btn_a()             { app_launcher::rotate_left(); }
+static void launcher_btn_b()             { app_launcher::rotate_right(); }
 
 static void watch_enter(lv_obj_t*)       { face_manager::create(); }
 static void watch_leave()                { face_manager::destroy(); }
 static void watch_tick()                 { face_manager::update(); }
 
+static void stopwatch_enter(lv_obj_t* p) { app_stopwatch::enter(p); }
+static void stopwatch_leave()             { app_stopwatch::leave(); }
+static void stopwatch_tick()              { app_stopwatch::tick(); }
+static void stopwatch_btn_a()             { app_stopwatch::press_run(); }
+static void stopwatch_btn_b()             { app_stopwatch::press_aux(); }
+
 // Stub trampolines for apps whose UIs aren't built yet. Each just forwards
 // to app_stub::enter with its own name + Phosphor glyph so a tap at least
 // lands somewhere named. As each real app gets built, swap its trio of
-// trampolines below for the real namespace's enter/leave/tick.
+// trampolines below for the real namespace's enter/leave/tick. Stubs
+// have no A/B button handlers (just back via A+B).
 #define STUB_APP(idname, icon_lit, label_lit) \
     static void idname##_enter(lv_obj_t* p) { app_stub::enter(p, icon_lit, label_lit); } \
     static void idname##_leave()             { app_stub::leave(); } \
     static void idname##_tick()              { app_stub::tick(); }
 
-STUB_APP(stopwatch, "\xEE\x92\x92", "STOPWATCH")
 STUB_APP(schedule,  "\xEE\x84\x8A", "SCHEDULE")
 STUB_APP(aichat,    "\xEE\x9D\xA2", "AI CHAT")
 STUB_APP(papachat,  "\xEE\x85\xAC", "PAPA")
@@ -44,14 +53,14 @@ STUB_APP(settings,  "\xEE\x89\xB2", "SETTINGS")
 //   gear-six       U+E272   → "\xEE\x89\xB2"
 //   house          U+E2C2   → "\xEE\x8B\x82"  (launcher's own icon, unused by the grid)
 
-static const App APP_LAUNCHER  = { "HOME",      "\xEE\x8B\x82", launcher_enter,  launcher_leave,  launcher_tick  };
-static const App APP_WATCH     = { "WATCH",     "\xEE\x93\xA6", watch_enter,     watch_leave,     watch_tick     };
-static const App APP_STOPWATCH = { "STOPWATCH", "\xEE\x92\x92", stopwatch_enter, stopwatch_leave, stopwatch_tick };
-static const App APP_SCHEDULE  = { "SCHEDULE",  "\xEE\x84\x8A", schedule_enter,  schedule_leave,  schedule_tick  };
-static const App APP_AICHAT    = { "AI CHAT",   "\xEE\x9D\xA2", aichat_enter,    aichat_leave,    aichat_tick    };
-static const App APP_PAPACHAT  = { "PAPA",      "\xEE\x85\xAC", papachat_enter,  papachat_leave,  papachat_tick  };
-static const App APP_COMPASS   = { "COMPASS",   "\xEE\x87\x88", compass_enter,   compass_leave,   compass_tick   };
-static const App APP_SETTINGS  = { "SETTINGS",  "\xEE\x89\xB2", settings_enter,  settings_leave,  settings_tick  };
+static const App APP_LAUNCHER  = { "HOME",      "\xEE\x8B\x82", launcher_enter,  launcher_leave,  launcher_tick,  launcher_btn_a,  launcher_btn_b };
+static const App APP_WATCH     = { "WATCH",     "\xEE\x93\xA6", watch_enter,     watch_leave,     watch_tick,     nullptr,         nullptr        };
+static const App APP_STOPWATCH = { "STOPWATCH", "\xEE\x92\x92", stopwatch_enter, stopwatch_leave, stopwatch_tick, stopwatch_btn_a, stopwatch_btn_b};
+static const App APP_SCHEDULE  = { "SCHEDULE",  "\xEE\x84\x8A", schedule_enter,  schedule_leave,  schedule_tick,  nullptr,         nullptr        };
+static const App APP_AICHAT    = { "AI CHAT",   "\xEE\x9D\xA2", aichat_enter,    aichat_leave,    aichat_tick,    nullptr,         nullptr        };
+static const App APP_PAPACHAT  = { "PAPA",      "\xEE\x85\xAC", papachat_enter,  papachat_leave,  papachat_tick,  nullptr,         nullptr        };
+static const App APP_COMPASS   = { "COMPASS",   "\xEE\x87\x88", compass_enter,   compass_leave,   compass_tick,   nullptr,         nullptr        };
+static const App APP_SETTINGS  = { "SETTINGS",  "\xEE\x89\xB2", settings_enter,  settings_leave,  settings_tick,  nullptr,         nullptr        };
 
 const App* const g_apps[] = {
     &APP_LAUNCHER,   // [0] reserved — home grid, skipped by launcher iteration

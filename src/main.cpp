@@ -642,15 +642,16 @@ void loop() {
             }
         }
 
+        // Solo releases dispatch through the current app's optional A/B
+        // callbacks (set in app_registry.cpp). Launcher uses these for
+        // wheel rotate; Stopwatch uses them for run/lap.
         if (M5.BtnA.wasReleased() && !s_combo_fired) {
-            if (app_runtime::current() == g_apps[0]) {
-                app_launcher::rotate_left();
-            }
+            const App* cur = app_runtime::current();
+            if (cur && cur->on_button_a) cur->on_button_a();
         }
         if (M5.BtnB.wasReleased() && !s_combo_fired) {
-            if (app_runtime::current() == g_apps[0]) {
-                app_launcher::rotate_right();
-            }
+            const App* cur = app_runtime::current();
+            if (cur && cur->on_button_b) cur->on_button_b();
         }
         if (!a_held && !b_held) s_combo_fired = false;
     }
