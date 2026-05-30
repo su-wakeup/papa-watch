@@ -546,6 +546,29 @@ void setup() {
                   M5.Imu.isEnabled(), M5.Rtc.isEnabled(),
                   M5.Touch.isEnabled(), M5.Speaker.isEnabled());
 
+    {
+        // Probe magnetometer over a second: get 10 samples spaced ~100ms.
+        // If they're all 0.0 the BMM150 isn't really there (M5Unified
+        // happily 'detects' a chip whose I2C address ACKs even when nothing
+        // is wired behind it). M5StopWatch's official sensor list only
+        // includes BMI270 → no magnetic compass possible without mod.
+        float min_mag = 1e9f, max_mag = -1e9f;
+        for (int i = 0; i < 10; i++) {
+            M5.Imu.update();
+            float mx = 0, my = 0, mz = 0;
+            M5.Imu.getMag(&mx, &my, &mz);
+            float m = sqrtf(mx*mx + my*my + mz*mz);
+            if (m < min_mag) min_mag = m;
+            if (m > max_mag) max_mag = m;
+            Serial.printf("[mag] s%d: (%.1f, %.1f, %.1f) |M|=%.1f uT\n",
+                          i, mx, my, mz, m);
+            delay(100);
+        }
+        Serial.printf("[mag] verdict: range %.1f..%.1f uT %s\n",
+                      min_mag, max_mag,
+                      (max_mag < 0.1f) ? "→ NO magnetometer chip" : "→ chip alive");
+    }
+
     steps::init();
     app_settings::apply_on_boot();    // brightness / volume / vibrate from NVS
 

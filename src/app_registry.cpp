@@ -7,6 +7,7 @@
 #include "app_stub.h"
 #include "app_stopwatch.h"
 #include "app_settings.h"
+#include "app_sundial.h"
 #include "face_manager.h"
 #include <lvgl.h>
 
@@ -34,6 +35,10 @@ static void settings_tick()               { app_settings::tick(); }
 static void settings_btn_a()              { app_settings::scroll_up(); }
 static void settings_btn_b()              { app_settings::scroll_down(); }
 
+static void compass_enter(lv_obj_t* p)   { app_sundial::enter(p); }
+static void compass_leave()               { app_sundial::leave(); }
+static void compass_tick()                { app_sundial::tick(); }
+
 // Stub trampolines for apps whose UIs aren't built yet. Each just forwards
 // to app_stub::enter with its own name + Phosphor glyph so a tap at least
 // lands somewhere named. As each real app gets built, swap its trio of
@@ -47,7 +52,7 @@ static void settings_btn_b()              { app_settings::scroll_down(); }
 STUB_APP(schedule,  "\xEE\x84\x8A", "SCHEDULE")
 STUB_APP(aichat,    "\xEE\x9D\xA2", "AI CHAT")
 STUB_APP(papachat,  "\xEE\x85\xAC", "PAPA")
-STUB_APP(compass,   "\xEE\x87\x88", "COMPASS")
+// (compass has a real implementation — see compass_enter/leave/tick above)
 // (settings has a real implementation now — see settings_enter/leave/tick above)
 
 // ── registry (UTF-8 codepoints are Phosphor regular) ─────────────────────
@@ -66,7 +71,7 @@ static const App APP_STOPWATCH = { "STOPWATCH", "\xEE\x92\x92", stopwatch_enter,
 static const App APP_SCHEDULE  = { "SCHEDULE",  "\xEE\x84\x8A", schedule_enter,  schedule_leave,  schedule_tick,  nullptr,         nullptr        };
 static const App APP_AICHAT    = { "AI CHAT",   "\xEE\x9D\xA2", aichat_enter,    aichat_leave,    aichat_tick,    nullptr,         nullptr        };
 static const App APP_PAPACHAT  = { "PAPA",      "\xEE\x85\xAC", papachat_enter,  papachat_leave,  papachat_tick,  nullptr,         nullptr        };
-static const App APP_COMPASS   = { "COMPASS",   "\xEE\x87\x88", compass_enter,   compass_leave,   compass_tick,   nullptr,         nullptr        };
+static const App APP_COMPASS   = { "SUNDIAL",   "\xEE\x87\x88", compass_enter,   compass_leave,   compass_tick,   nullptr,         nullptr        };  // no A/B; touch only
 static const App APP_SETTINGS  = { "SETTINGS",  "\xEE\x89\xB2", settings_enter,  settings_leave,  settings_tick,  settings_btn_a,  settings_btn_b };
 
 const App* const g_apps[] = {
