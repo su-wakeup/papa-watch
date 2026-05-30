@@ -19,6 +19,7 @@
 #include "face_boot.h"
 #include "face_lcd.h"
 #include "face_manager.h"
+#include "heart_overlay.h"
 #include "heart_relay.h"
 #include "ota.h"
 #include <ArduinoJson.h>
@@ -478,13 +479,12 @@ void setup() {
         hapticHeartbeat();
         chimeReceive();
         s_unread_count++;
+        heart_overlay::trigger();        // big red heart blooms over whatever face is showing
 
-        // Show the note if it's pure ASCII (DSEG14 only has uppercase Latin + digits).
-        // CJK note text will land in a later OTA push once we ship a CJK font.
+        // Keep the LCD bezel text-alert too for the note content (when on face_lcd).
         char alert_buf[40];
         size_t note_len = strlen(note);
         if (note_len > 0 && note_len < sizeof(alert_buf) - 1 && isPureAscii(note, note_len)) {
-            // upcase for DSEG14
             for (size_t i = 0; i < note_len; i++) {
                 char c = note[i];
                 alert_buf[i] = (c >= 'a' && c <= 'z') ? (c - 'a' + 'A') : c;
@@ -530,11 +530,13 @@ void loop() {
         if (face_boot::finished()) {
             face_boot::destroy();
             face_manager::create();
+            heart_overlay::create();
             s_boot_done = true;
         }
         delay(5);
         return;
     }
+    heart_overlay::update();
 
     // ── touch hold → arm → release → send heart to dad ──
     auto tt2 = M5.Touch.getDetail();
