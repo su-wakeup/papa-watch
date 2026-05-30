@@ -1,7 +1,7 @@
 #include "face_manager.h"
 #include "face_lcd.h"
 #include "face_mech.h"
-#include "face_term.h"
+#include "face_alarm.h"
 #include <lvgl.h>
 #include <Preferences.h>
 #include <Arduino.h>
@@ -67,7 +67,7 @@ void create() {
     face_mech::create(s_tiles[1]);
 
     // Tile 2: cyber terminal (VT323 phosphor green)
-    face_term::create(s_tiles[2]);
+    face_alarm::create(s_tiles[2]);
 
     lv_tileview_set_tile(s_tileview, s_tiles[s_active_idx], LV_ANIM_OFF);
     lv_obj_add_event_cb(s_tileview, on_value_changed, LV_EVENT_VALUE_CHANGED, nullptr);
@@ -79,7 +79,7 @@ void update() {
     // Cheap to refresh all three each second; only the active tile is visible.
     face_lcd::update();
     face_mech::update();
-    face_term::update();
+    face_alarm::update();
 }
 
 int currentIndex() { return s_active_idx; }
@@ -89,7 +89,7 @@ void destroy() {
     // short-circuit on s_root==nullptr). Then nuke the tileview tree.
     face_lcd::destroy();
     face_mech::destroy();
-    face_term::destroy();
+    face_alarm::destroy();
     if (s_tileview) {
         lv_obj_del(s_tileview);
         s_tileview = nullptr;

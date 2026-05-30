@@ -16,6 +16,11 @@ static constexpr uint32_t MAX_AGE_SEC = 24UL * 60 * 60;    // 24h cache
 static bool fetchFromIp(Location* out) {
     if (WiFi.status() != WL_CONNECTED) return false;
     HTTPClient http;
+    // Hard timeouts so a sluggish network can't stall the main loop. We've
+    // seen the 10-second second-hand jump on the mech face when the request
+    // sits on connect() with no upper bound.
+    http.setConnectTimeout(2500);
+    http.setTimeout(2500);
     if (!http.begin("http://ip-api.com/json/?fields=status,city,lat,lon")) return false;
     int code = http.GET();
     if (code != HTTP_CODE_OK) { http.end(); return false; }

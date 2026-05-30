@@ -23,6 +23,8 @@
 #include "face_mech.h"
 #include "heart_overlay.h"
 #include "steps.h"
+#include "alarm.h"
+#include "geo.h"
 #include "app.h"
 #include "app_launcher.h"
 #include "app_settings.h"
@@ -570,6 +572,18 @@ void setup() {
     }
 
     steps::init();
+    alarms::load();
+    // Prime the geo cache once at boot, when we've just confirmed WiFi.
+    // Avoids the ~3s sync HTTP call running inside app_sundial::enter()
+    // (which was blocking LVGL → mech-face second hand jumping forward).
+    {
+        geo::Location loc;
+        if (geo::getLocation(&loc)) {
+            Serial.printf("[geo] %s  %.3f, %.3f\n", loc.city, loc.lat, loc.lon);
+        } else {
+            Serial.println("[geo] prime failed; sundial will try again later");
+        }
+    }
     app_settings::apply_on_boot();    // brightness / volume / vibrate from NVS
 
     Serial.println("=======================================");
@@ -687,6 +701,7 @@ void loop() {
     if (tt.tm_sec != s_last_tick_sec) {
         s_last_tick_sec = tt.tm_sec;
         steps::resetIfNewDay();
+        alarms::check();
         // face_manager::update() is now driven by app_runtime::tick() above —
         // the Watch app's tick trampoline forwards to it. Status writes below
         // are no-ops on faces whose s_root is null, so they're safe to keep
