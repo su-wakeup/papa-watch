@@ -19,6 +19,7 @@
 #include "face_boot.h"
 #include "face_lcd.h"
 #include "face_manager.h"
+#include "face_term.h"
 #include "heart_overlay.h"
 #include "heart_relay.h"
 #include "ota.h"
@@ -600,6 +601,7 @@ void loop() {
             WiFi.status() == WL_CONNECTED,
             heart_relay::isConnected(),
             s_unread_count);
+        face_term::setUnread(s_unread_count);
     }
 
     delay(5);

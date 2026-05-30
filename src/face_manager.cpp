@@ -1,13 +1,14 @@
 #include "face_manager.h"
 #include "face_lcd.h"
 #include "face_mech.h"
+#include "face_term.h"
 #include <lvgl.h>
 #include <Preferences.h>
 #include <Arduino.h>
 
 namespace face_manager {
 
-static constexpr int N_FACES = 2;            // LCD + mech-placeholder (will grow)
+static constexpr int N_FACES = 3;            // LCD + mech + term
 static constexpr const char* NVS_NS  = "face";
 static constexpr const char* NVS_KEY = "idx";
 
@@ -65,6 +66,9 @@ void create() {
     // Tile 1: mechanical analog watch (LILYGO hands)
     face_mech::create(s_tiles[1]);
 
+    // Tile 2: cyber terminal (VT323 phosphor green)
+    face_term::create(s_tiles[2]);
+
     lv_tileview_set_tile(s_tileview, s_tiles[s_active_idx], LV_ANIM_OFF);
     lv_obj_add_event_cb(s_tileview, on_value_changed, LV_EVENT_VALUE_CHANGED, nullptr);
 
@@ -72,9 +76,10 @@ void create() {
 }
 
 void update() {
-    // Cheap to refresh both each second; only the active tile is visible.
+    // Cheap to refresh all three each second; only the active tile is visible.
     face_lcd::update();
     face_mech::update();
+    face_term::update();
 }
 
 int currentIndex() { return s_active_idx; }
