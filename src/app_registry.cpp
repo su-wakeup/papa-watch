@@ -6,6 +6,7 @@
 #include "app_launcher.h"
 #include "app_stub.h"
 #include "app_stopwatch.h"
+#include "app_settings.h"
 #include "face_manager.h"
 #include <lvgl.h>
 
@@ -27,6 +28,12 @@ static void stopwatch_tick()              { app_stopwatch::tick(); }
 static void stopwatch_btn_a()             { app_stopwatch::press_run(); }
 static void stopwatch_btn_b()             { app_stopwatch::press_aux(); }
 
+static void settings_enter(lv_obj_t* p)  { app_settings::enter(p); }
+static void settings_leave()              { app_settings::leave(); }
+static void settings_tick()               { app_settings::tick(); }
+static void settings_btn_a()              { app_settings::scroll_up(); }
+static void settings_btn_b()              { app_settings::scroll_down(); }
+
 // Stub trampolines for apps whose UIs aren't built yet. Each just forwards
 // to app_stub::enter with its own name + Phosphor glyph so a tap at least
 // lands somewhere named. As each real app gets built, swap its trio of
@@ -41,7 +48,7 @@ STUB_APP(schedule,  "\xEE\x84\x8A", "SCHEDULE")
 STUB_APP(aichat,    "\xEE\x9D\xA2", "AI CHAT")
 STUB_APP(papachat,  "\xEE\x85\xAC", "PAPA")
 STUB_APP(compass,   "\xEE\x87\x88", "COMPASS")
-STUB_APP(settings,  "\xEE\x89\xB2", "SETTINGS")
+// (settings has a real implementation now — see settings_enter/leave/tick above)
 
 // ── registry (UTF-8 codepoints are Phosphor regular) ─────────────────────
 //   watch          U+E4E6   → "\xEE\x93\xA6"
@@ -60,7 +67,7 @@ static const App APP_SCHEDULE  = { "SCHEDULE",  "\xEE\x84\x8A", schedule_enter, 
 static const App APP_AICHAT    = { "AI CHAT",   "\xEE\x9D\xA2", aichat_enter,    aichat_leave,    aichat_tick,    nullptr,         nullptr        };
 static const App APP_PAPACHAT  = { "PAPA",      "\xEE\x85\xAC", papachat_enter,  papachat_leave,  papachat_tick,  nullptr,         nullptr        };
 static const App APP_COMPASS   = { "COMPASS",   "\xEE\x87\x88", compass_enter,   compass_leave,   compass_tick,   nullptr,         nullptr        };
-static const App APP_SETTINGS  = { "SETTINGS",  "\xEE\x89\xB2", settings_enter,  settings_leave,  settings_tick,  nullptr,         nullptr        };
+static const App APP_SETTINGS  = { "SETTINGS",  "\xEE\x89\xB2", settings_enter,  settings_leave,  settings_tick,  settings_btn_a,  settings_btn_b };
 
 const App* const g_apps[] = {
     &APP_LAUNCHER,   // [0] reserved — home grid, skipped by launcher iteration

@@ -25,6 +25,7 @@
 #include "steps.h"
 #include "app.h"
 #include "app_launcher.h"
+#include "app_settings.h"
 #include "dad_status.h"
 #include "heart_relay.h"
 #include "ota.h"
@@ -35,7 +36,8 @@
 // OTA endpoint — real GitHub Releases now. Pushing a v*.*.* tag to the repo
 // triggers .github/workflows/release.yml, which uploads firmware.bin as an
 // asset. The on-watch fetcher hits the API below and pulls the newest tag.
-#define OTA_MANIFEST_URL "https://api.github.com/repos/su-wakeup/papa-watch/releases/latest"
+// extern-linkable so app_settings can reuse it for the "Check Updates" row.
+const char* OTA_MANIFEST_URL = "https://api.github.com/repos/su-wakeup/papa-watch/releases/latest";
 
 // ── geometry ─────────────────────────────────────────────
 static constexpr int CENTER_X = 234;
@@ -545,6 +547,7 @@ void setup() {
                   M5.Touch.isEnabled(), M5.Speaker.isEnabled());
 
     steps::init();
+    app_settings::apply_on_boot();    // brightness / volume / vibrate from NVS
 
     Serial.println("=======================================");
 }
