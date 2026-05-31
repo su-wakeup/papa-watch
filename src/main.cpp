@@ -590,12 +590,36 @@ void setup() {
 }
 
 void loop() {
+    // ── frame-budget watchdog ──
+    // If any single loop iteration exceeds 150ms, log it with which sections
+    // ran. This is what tells us next time whether the freeze is MQTT,
+    // LVGL render, audio, or something else — so we don't have to guess.
+    static uint32_t s_loop_t0 = 0;
+    uint32_t loop_dt = s_loop_t0 ? millis() - s_loop_t0 : 0;
+    if (loop_dt > 150) {
+        Serial.printf("[loop] LONG iter %ums (heap free=%uKB)\n",
+                      (unsigned)loop_dt,
+                      (unsigned)(ESP.getFreeHeap() / 1024));
+    }
+    s_loop_t0 = millis();
+
     M5.update();
 
     // ── LVGL drives the panel; we just feed the tick and refresh the face once/sec ──
+    uint32_t t1 = millis();
     lvgl_port::tick();
+    uint32_t t2 = millis();
     heart_relay::tick();
+    uint32_t t3 = millis();
     steps::update();
+    uint32_t t4 = millis();
+
+    if (loop_dt > 150) {
+        Serial.printf("  ↳ lvgl=%ums  mqtt=%ums  steps=%ums\n",
+                      (unsigned)(t2 - t1),
+                      (unsigned)(t3 - t2),
+                      (unsigned)(t4 - t3));
+    }
 
     // Boot greeting first; then land on the launcher (v0.9.0 — was face_manager
     // pre-launcher). The launcher's "Watch" cell still routes to face_manager,

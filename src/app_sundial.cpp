@@ -17,12 +17,19 @@ LV_FONT_DECLARE(mont_light_72_digits);
 namespace app_sundial {
 
 static lv_obj_t* s_root          = nullptr;
-static lv_obj_t* s_az_lbl        = nullptr;
-static lv_obj_t* s_dir_lbl       = nullptr;
-static lv_obj_t* s_elev_lbl      = nullptr;
-static lv_obj_t* s_hint_lbl      = nullptr;
-static lv_obj_t* s_loc_lbl       = nullptr;
+// Daylight sundial — cream dial, dark text/ticks. A small "matchstick"
+// gnomon stands at the 12-o'clock position; a semi-transparent dark line
+// extends from its base across the dial past the centre, simulating the
+// shadow cast by the sun (which the user aligns with the actual sun).
+static lv_obj_t* s_dial_ring     = nullptr;
+static lv_obj_t* s_shadow        = nullptr;
+static lv_obj_t* s_gnomon_head   = nullptr;
+static lv_obj_t* s_gnomon_stick  = nullptr;
+static lv_obj_t* s_card_lbl[4]   = {};      // N, E, S, W
+static lv_obj_t* s_tick[12]      = {};      // 12 dots, every 30°, rotate w/ card
 static lv_obj_t* s_status_lbl    = nullptr;
+static lv_obj_t* s_dir_lbl       = nullptr;
+static lv_obj_t* s_loc_lbl       = nullptr;
 // Level lens (bottom half)
 static lv_obj_t* s_level_lens    = nullptr;
 static lv_obj_t* s_level_bubble  = nullptr;
@@ -32,11 +39,32 @@ static lv_obj_t* s_crosshair_v   = nullptr;
 
 static uint32_t s_last_imu_ms = 0;
 
-static constexpr int LEVEL_CY     = 130;
-static constexpr int LEVEL_R      = 60;
-static constexpr int BUBBLE_R     = 16;
-static constexpr float DEG_TO_PX  = 2.8f;
+// Full-screen compass: dial fills the panel so the user can read it at arm's
+// length outdoors. Tiny bubble level sits at the very centre (real handheld
+// compasses do this) so the watch's flatness is verified while sighting.
+static constexpr int DIAL_CY      = 0;
+static constexpr int DIAL_R       = 205;     // outer ring near panel edge
+static constexpr int TICK_R       = 188;
+static constexpr int LETTER_R     = 152;
+static constexpr int LEVEL_CY     = 0;
+static constexpr int LEVEL_R      = 34;      // tiny centre bubble lens
+static constexpr int BUBBLE_R     = 10;
+static constexpr float DEG_TO_PX  = 1.1f;
 static constexpr float LEVEL_TH   = 2.5f;
+
+static const char* CARD_LETTERS[4] = {"N", "E", "S", "W"};
+// On the cream dial, N stays red; the other three are dark sepia.
+static const uint32_t CARD_COLORS[4] = {0xC02828, 0x3A2818, 0x3A2818, 0x3A2818};
+
+// Palette for the light/parchment dial
+static constexpr uint32_t COL_PAPER   = 0xE6D2A8;   // warm cream
+static constexpr uint32_t COL_INK     = 0x3A2818;   // dark sepia (border + text)
+static constexpr uint32_t COL_TICK_M  = 0x3A2818;   // major tick
+static constexpr uint32_t COL_TICK_S  = 0x7A5840;   // minor tick
+static constexpr uint32_t COL_AMBER   = 0xC8782C;   // gnomon head (sun)
+static constexpr uint32_t COL_SHADOW  = 0x3A2818;   // shadow line
+static constexpr uint32_t COL_BUBBLE  = 0xC02828;   // spirit-level bubble red
+static constexpr uint32_t COL_LEVEL_OK= 0x4F8830;   // bubble centred = green
 
 static geo::Location s_loc       = {0, 0, {0}};
 static bool         s_has_loc    = false;
@@ -70,93 +98,125 @@ void enter(lv_obj_t* parent) {
     lv_obj_set_style_bg_color(s_root, lv_color_hex(0x100A05), 0);
     lv_obj_set_style_bg_opa(s_root, LV_OPA_COVER, 0);
 
+    // ── parchment dial face (filled) ──
+    s_dial_ring = lv_obj_create(s_root);
+    lv_obj_remove_style_all(s_dial_ring);
+    lv_obj_set_size(s_dial_ring, DIAL_R * 2, DIAL_R * 2);
+    lv_obj_align(s_dial_ring, LV_ALIGN_CENTER, 0, DIAL_CY);
+    lv_obj_set_style_radius(s_dial_ring, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_bg_color(s_dial_ring, lv_color_hex(COL_PAPER), 0);
+    lv_obj_set_style_bg_opa(s_dial_ring, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_color(s_dial_ring, lv_color_hex(COL_INK), 0);
+    lv_obj_set_style_border_width(s_dial_ring, 5, 0);     // thicker frame
+    lv_obj_remove_flag(s_dial_ring, LV_OBJ_FLAG_SCROLLABLE);
+
+    // ── gnomon shadow — thicker, darker, more like real cast shadow ──
+    {
+        const int top = -DIAL_R + 24;
+        const int bot = 30;
+        s_shadow = lv_obj_create(s_root);
+        lv_obj_remove_style_all(s_shadow);
+        lv_obj_set_size(s_shadow, 9, bot - top);            // 4 → 9 px wide
+        lv_obj_set_style_bg_color(s_shadow, lv_color_hex(COL_SHADOW), 0);
+        lv_obj_set_style_bg_opa(s_shadow, 160, 0);          // ~63% opacity
+        lv_obj_set_style_radius(s_shadow, 2, 0);
+        lv_obj_align(s_shadow, LV_ALIGN_CENTER, 0, (top + bot) / 2);
+    }
+
+    // ── 12 tick dots — fatter, more compass-like ──
+    for (int i = 0; i < 12; i++) {
+        s_tick[i] = lv_obj_create(s_root);
+        lv_obj_remove_style_all(s_tick[i]);
+        bool major = (i % 3 == 0);
+        int sz = major ? 12 : 7;                            // 7/4 → 12/7
+        lv_obj_set_size(s_tick[i], sz, sz);
+        lv_obj_set_style_radius(s_tick[i], LV_RADIUS_CIRCLE, 0);
+        lv_obj_set_style_bg_color(s_tick[i],
+            lv_color_hex(major ? COL_TICK_M : COL_TICK_S), 0);
+        lv_obj_set_style_bg_opa(s_tick[i], LV_OPA_COVER, 0);
+        lv_obj_align(s_tick[i], LV_ALIGN_CENTER, 0, DIAL_CY);
+    }
+
+    // ── 4 cardinal letters — bundled montserrat (Medium weight) is much
+    //    chunkier than our generated Mont Light; reads "compass card" not
+    //    "hairline label" outdoors.
+    for (int i = 0; i < 4; i++) {
+        s_card_lbl[i] = lv_label_create(s_root);
+        lv_obj_set_style_text_font(s_card_lbl[i], &lv_font_montserrat_32, 0);
+        lv_obj_set_style_text_color(s_card_lbl[i], lv_color_hex(CARD_COLORS[i]), 0);
+        lv_label_set_text(s_card_lbl[i], CARD_LETTERS[i]);
+        lv_obj_align(s_card_lbl[i], LV_ALIGN_CENTER, 0, DIAL_CY);
+    }
+
+    // ── gnomon stick + amber sun head, both beefier ──
+    s_gnomon_stick = lv_obj_create(s_root);
+    lv_obj_remove_style_all(s_gnomon_stick);
+    lv_obj_set_size(s_gnomon_stick, 7, 22);                 // 5×20 → 7×22
+    lv_obj_set_style_radius(s_gnomon_stick, 2, 0);
+    lv_obj_set_style_bg_color(s_gnomon_stick, lv_color_hex(COL_INK), 0);
+    lv_obj_set_style_bg_opa(s_gnomon_stick, LV_OPA_COVER, 0);
+    lv_obj_align(s_gnomon_stick, LV_ALIGN_CENTER, 0, -DIAL_R + 15);
+
+    s_gnomon_head = lv_obj_create(s_root);
+    lv_obj_remove_style_all(s_gnomon_head);
+    lv_obj_set_size(s_gnomon_head, 22, 22);                 // 16 → 22
+    lv_obj_set_style_radius(s_gnomon_head, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_bg_color(s_gnomon_head, lv_color_hex(COL_AMBER), 0);
+    lv_obj_set_style_bg_opa(s_gnomon_head, LV_OPA_COVER, 0);
+    lv_obj_set_style_shadow_color(s_gnomon_head, lv_color_hex(COL_AMBER), 0);
+    lv_obj_set_style_shadow_width(s_gnomon_head, 12, 0);
+    lv_obj_set_style_shadow_opa(s_gnomon_head, 130, 0);
+    lv_obj_set_style_shadow_spread(s_gnomon_head, 0, 0);
+    lv_obj_align(s_gnomon_head, LV_ALIGN_CENTER, 0, -DIAL_R - 5);
+
+    // Status line — Medium-weight bundled montserrat for legibility outdoors.
     s_status_lbl = lv_label_create(s_root);
-    lv_obj_set_style_text_font(s_status_lbl, &mont_light_14, 0);
-    lv_obj_set_style_text_color(s_status_lbl, lv_color_hex(0x806848), 0);
-    lv_label_set_text(s_status_lbl, "SUN BEARING");
-    lv_obj_align(s_status_lbl, LV_ALIGN_CENTER, 0, -210);
+    lv_obj_set_style_text_font(s_status_lbl, &lv_font_montserrat_24, 0);
+    lv_obj_set_style_text_color(s_status_lbl, lv_color_hex(COL_INK), 0);
+    lv_label_set_text(s_status_lbl, "Locating...");
+    lv_obj_align(s_status_lbl, LV_ALIGN_CENTER, 0, 65);
 
-    // Hero azimuth — amber number (shrunk to make room for the bubble below).
-    s_az_lbl = lv_label_create(s_root);
-    lv_obj_set_style_text_font(s_az_lbl, &mont_light_32, 0);
-    lv_obj_set_style_text_color(s_az_lbl, lv_color_hex(0xE6A050), 0);
-    lv_label_set_text(s_az_lbl, "--°");
-    lv_obj_align(s_az_lbl, LV_ALIGN_CENTER, -45, -175);
+    s_dir_lbl = nullptr;
 
-    s_dir_lbl = lv_label_create(s_root);
-    lv_obj_set_style_text_font(s_dir_lbl, &mont_light_32, 0);
-    lv_obj_set_style_text_color(s_dir_lbl, lv_color_hex(0xF5E8D0), 0);
-    lv_label_set_text(s_dir_lbl, "--");
-    lv_obj_align(s_dir_lbl, LV_ALIGN_CENTER, 50, -175);
-
-    s_elev_lbl = lv_label_create(s_root);
-    lv_obj_set_style_text_font(s_elev_lbl, &mont_light_14, 0);
-    lv_obj_set_style_text_color(s_elev_lbl, lv_color_hex(0xCFC2A8), 0);
-    lv_label_set_text(s_elev_lbl, "elevation --°");
-    lv_obj_align(s_elev_lbl, LV_ALIGN_CENTER, 0, -140);
-
-    // Multi-line hint
-    s_hint_lbl = lv_label_create(s_root);
-    lv_obj_set_style_text_font(s_hint_lbl, &mont_light_20, 0);
-    lv_obj_set_style_text_color(s_hint_lbl, lv_color_hex(0xF5E8D0), 0);
-    lv_obj_set_style_text_align(s_hint_lbl, LV_TEXT_ALIGN_CENTER, 0);
-    lv_label_set_long_mode(s_hint_lbl, LV_LABEL_LONG_WRAP);
-    lv_obj_set_width(s_hint_lbl, 380);
-    lv_label_set_text(s_hint_lbl, "Locating...");
-    lv_obj_align(s_hint_lbl, LV_ALIGN_CENTER, 0, -75);
-
-    // ── level lens (bottom half) ──
+    // ── centre bubble lens (lives at the END of the shadow line) ──
+    // Lens body is parchment so the shadow appears to terminate at it;
+    // border is dark ink for a real-compass look.
     s_level_lens = lv_obj_create(s_root);
     lv_obj_remove_style_all(s_level_lens);
     lv_obj_set_size(s_level_lens, LEVEL_R * 2, LEVEL_R * 2);
     lv_obj_align(s_level_lens, LV_ALIGN_CENTER, 0, LEVEL_CY);
     lv_obj_set_style_radius(s_level_lens, LV_RADIUS_CIRCLE, 0);
-    lv_obj_set_style_bg_color(s_level_lens, lv_color_hex(0x1F1308), 0);
+    lv_obj_set_style_bg_color(s_level_lens, lv_color_hex(COL_PAPER), 0);
     lv_obj_set_style_bg_opa(s_level_lens, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_color(s_level_lens, lv_color_hex(0x6A4A2C), 0);
+    lv_obj_set_style_border_color(s_level_lens, lv_color_hex(COL_INK), 0);
     lv_obj_set_style_border_width(s_level_lens, 2, 0);
     lv_obj_remove_flag(s_level_lens, LV_OBJ_FLAG_SCROLLABLE);
 
-    s_crosshair_h = lv_obj_create(s_level_lens);
-    lv_obj_remove_style_all(s_crosshair_h);
-    lv_obj_set_size(s_crosshair_h, LEVEL_R * 2 - 14, 1);
-    lv_obj_set_style_bg_color(s_crosshair_h, lv_color_hex(0x4A3828), 0);
-    lv_obj_set_style_bg_opa(s_crosshair_h, LV_OPA_COVER, 0);
-    lv_obj_align(s_crosshair_h, LV_ALIGN_CENTER, 0, 0);
-
-    s_crosshair_v = lv_obj_create(s_level_lens);
-    lv_obj_remove_style_all(s_crosshair_v);
-    lv_obj_set_size(s_crosshair_v, 1, LEVEL_R * 2 - 14);
-    lv_obj_set_style_bg_color(s_crosshair_v, lv_color_hex(0x4A3828), 0);
-    lv_obj_set_style_bg_opa(s_crosshair_v, LV_OPA_COVER, 0);
-    lv_obj_align(s_crosshair_v, LV_ALIGN_CENTER, 0, 0);
+    s_crosshair_h = s_crosshair_v = nullptr;
 
     s_level_bubble = lv_obj_create(s_level_lens);
     lv_obj_remove_style_all(s_level_bubble);
     lv_obj_set_size(s_level_bubble, BUBBLE_R * 2, BUBBLE_R * 2);
     lv_obj_set_style_radius(s_level_bubble, LV_RADIUS_CIRCLE, 0);
-    lv_obj_set_style_bg_color(s_level_bubble, lv_color_hex(0xE6A050), 0);
+    lv_obj_set_style_bg_color(s_level_bubble, lv_color_hex(COL_BUBBLE), 0);
     lv_obj_set_style_bg_opa(s_level_bubble, LV_OPA_COVER, 0);
     lv_obj_align(s_level_bubble, LV_ALIGN_CENTER, 0, 0);
 
-    s_level_text = lv_label_create(s_root);
-    lv_obj_set_style_text_font(s_level_text, &mont_light_14, 0);
-    lv_obj_set_style_text_color(s_level_text, lv_color_hex(0x9C7848), 0);
-    lv_label_set_text(s_level_text, "--° / --°");
-    lv_obj_align(s_level_text, LV_ALIGN_CENTER, 0, LEVEL_CY + LEVEL_R + 14);
+    s_level_text = nullptr;
 
-    // Location footer
+    // Location footer — Medium-weight bundled font, dark sepia on parchment
     s_loc_lbl = lv_label_create(s_root);
-    lv_obj_set_style_text_font(s_loc_lbl, &mont_light_14, 0);
-    lv_obj_set_style_text_color(s_loc_lbl, lv_color_hex(0x705840), 0);
+    lv_obj_set_style_text_font(s_loc_lbl, &lv_font_montserrat_18, 0);
+    lv_obj_set_style_text_color(s_loc_lbl, lv_color_hex(COL_INK), 0);
     lv_label_set_text(s_loc_lbl, "--");
-    lv_obj_align(s_loc_lbl, LV_ALIGN_CENTER, 0, 220);
+    lv_obj_align(s_loc_lbl, LV_ALIGN_CENTER, 0, 105);
 
-    // One-shot location lookup. This may block briefly on first run.
+    // One-shot location lookup. Cached at boot, so this returns instantly
+    // after the first session. If still nothing (no WiFi and no cache),
+    // surface the failure in the status row.
     s_has_loc = geo::getLocation(&s_loc);
     if (!s_has_loc) {
-        lv_label_set_text(s_hint_lbl,
-            "No WiFi / no cached location.\nConnect & re-open.");
+        lv_label_set_text(s_status_lbl, "No WiFi / no cached location");
     }
 
     s_last_tick_sec = 0;     // force first tick to render
@@ -164,8 +224,10 @@ void enter(lv_obj_t* parent) {
 
 void leave() {
     if (s_root) { lv_obj_clean(s_root); s_root = nullptr; }
-    s_az_lbl = s_dir_lbl = s_elev_lbl = nullptr;
-    s_hint_lbl = s_loc_lbl = s_status_lbl = nullptr;
+    s_status_lbl = s_dir_lbl = s_loc_lbl = nullptr;
+    s_dial_ring = s_shadow = s_gnomon_head = s_gnomon_stick = nullptr;
+    for (int i = 0; i < 4; i++)  s_card_lbl[i] = nullptr;
+    for (int i = 0; i < 12; i++) s_tick[i]     = nullptr;
     s_level_lens = s_level_bubble = s_level_text = nullptr;
     s_crosshair_h = s_crosshair_v = nullptr;
 }
@@ -194,7 +256,7 @@ void tick() {
         lv_obj_align(s_level_bubble, LV_ALIGN_CENTER, bx, by);
         bool is_level = fabsf(roll) < LEVEL_TH && fabsf(pitch) < LEVEL_TH;
         lv_obj_set_style_bg_color(s_level_bubble,
-            lv_color_hex(is_level ? 0x80D070 : 0xE6A050), 0);
+            lv_color_hex(is_level ? COL_LEVEL_OK : COL_BUBBLE), 0);
         if (s_level_text) {
             char lbuf[24];
             snprintf(lbuf, sizeof(lbuf), "%+.0f° / %+.0f°", roll, pitch);
@@ -212,32 +274,41 @@ void tick() {
 
     sun::Pos p = sun::positionAt(s_loc.lat, s_loc.lon, now);
 
-    char buf[80];
-    snprintf(buf, sizeof(buf), "%d°", (int)(p.azimuth + 0.5f));
-    lv_label_set_text(s_az_lbl, buf);
-    lv_label_set_text(s_dir_lbl, eight_way(p.azimuth));
-
-    snprintf(buf, sizeof(buf), "elevation %+d°", (int)(p.elevation + 0.5f));
-    lv_label_set_text(s_elev_lbl, buf);
-    lv_obj_set_style_text_color(s_elev_lbl,
-        lv_color_hex(p.elevation < 0 ? 0xC04030 : 0xCFC2A8), 0);
-
-    if (p.elevation < 0) {
-        lv_label_set_text(s_hint_lbl,
-            "Sun is below the horizon.\nWait for sunrise.");
-    } else {
-        int n_clock = north_clock_position(p.azimuth);
-        snprintf(buf, sizeof(buf),
-                 "Point the 12 at the sun.\nNorth is at %d o'clock.",
-                 n_clock);
-        lv_label_set_text(s_hint_lbl, buf);
+    // ── place ticks + cardinals on the dial ──────────────────────────────
+    // Watch's 12-o'clock = sun direction. A real-world direction D appears
+    // on the dial at clock-angle (D − azimuth) clockwise from 12.
+    // Screen offset: x = R·sin(θ), y = −R·cos(θ).
+    for (int i = 0; i < 12; i++) {
+        if (!s_tick[i]) continue;
+        float theta = (i * 30.0f - p.azimuth) * (float)M_PI / 180.0f;
+        int dx = (int)( TICK_R * sinf(theta));
+        int dy = (int)(-TICK_R * cosf(theta));
+        lv_obj_align(s_tick[i], LV_ALIGN_CENTER, dx, DIAL_CY + dy);
+    }
+    for (int i = 0; i < 4; i++) {
+        if (!s_card_lbl[i]) continue;
+        float theta = (i * 90.0f - p.azimuth) * (float)M_PI / 180.0f;
+        int dx = (int)( LETTER_R * sinf(theta));
+        int dy = (int)(-LETTER_R * cosf(theta));
+        lv_obj_align(s_card_lbl[i], LV_ALIGN_CENTER, dx, DIAL_CY + dy);
     }
 
-    snprintf(buf, sizeof(buf), "%s   %.1f°%c %.1f°%c",
-             s_loc.city,
-             fabsf(s_loc.lat), s_loc.lat >= 0 ? 'N' : 'S',
-             fabsf(s_loc.lon), s_loc.lon >= 0 ? 'E' : 'W');
-    lv_label_set_text(s_loc_lbl, buf);
+    char buf[64];
+    if (p.elevation < 0) {
+        snprintf(buf, sizeof(buf), "Sun below horizon - wait for sunrise");
+        lv_obj_set_style_text_color(s_status_lbl, lv_color_hex(0xA02020), 0);
+    } else {
+        snprintf(buf, sizeof(buf), "%d° %s   elev %+d°",
+                 (int)(p.azimuth + 0.5f),
+                 eight_way(p.azimuth),
+                 (int)(p.elevation + 0.5f));
+        lv_obj_set_style_text_color(s_status_lbl, lv_color_hex(COL_INK), 0);
+    }
+    lv_label_set_text(s_status_lbl, buf);
+
+    // Just the city name now — full-screen dial leaves no room for lat/lon
+    // and the user can dig that out of Settings if needed.
+    lv_label_set_text(s_loc_lbl, s_loc.city);
 }
 
 }  // namespace app_sundial

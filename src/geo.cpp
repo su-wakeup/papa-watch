@@ -11,6 +11,36 @@ namespace geo {
 static constexpr const char* NVS_NS  = "papa-watch";
 static constexpr uint32_t MAX_AGE_SEC = 24UL * 60 * 60;    // 24h cache
 
+// Hand-curated preset cities. Used when ip-api gives the wrong answer
+// (VPN exit nodes, corporate proxies, etc).
+const Preset PRESETS[] = {
+    { "Shenzhen",  22.54f,  114.06f },
+    { "Beijing",   39.90f,  116.41f },
+    { "Shanghai",  31.23f,  121.47f },
+    { "Hong Kong", 22.32f,  114.17f },
+    { "PT-LA",     34.05f, -118.24f },
+    { "PT-SF",     37.77f, -122.42f },
+    { "NYC",       40.71f,  -74.01f },
+    { "London",    51.51f,   -0.13f },
+    { "Tokyo",     35.69f,  139.69f },
+    { "Sydney",   -33.87f,  151.21f },
+};
+const int PRESETS_N = sizeof(PRESETS) / sizeof(PRESETS[0]);
+
+int getOverrideIdx() {
+    Preferences p; p.begin(NVS_NS, true);
+    int v = p.getInt("geo_ov", 0);
+    p.end();
+    return v;
+}
+
+void setOverrideIdx(int idx) {
+    if (idx < 0 || idx > PRESETS_N) idx = 0;
+    Preferences p; p.begin(NVS_NS, false);
+    p.putInt("geo_ov", idx);
+    p.end();
+}
+
 // One-shot fetch from ip-api.com. Free, no key, ~45 req/min — plenty for once
 // a day. We ask for only the 4 fields we need to keep the payload tiny.
 static bool fetchFromIp(Location* out) {
@@ -71,6 +101,17 @@ static void saveCached(const Location* in) {
 }
 
 bool getLocation(Location* out) {
+    // Manual override wins over IP cache — set this when ip-api lands the
+    // user in a VPN-exit city.
+    int ov = getOverrideIdx();
+    if (ov >= 1 && ov <= PRESETS_N) {
+        const Preset& pr = PRESETS[ov - 1];
+        out->lat = pr.lat;
+        out->lon = pr.lon;
+        strncpy(out->city, pr.name, sizeof(out->city) - 1);
+        out->city[sizeof(out->city) - 1] = 0;
+        return true;
+    }
     if (loadCached(out)) return true;
     if (!fetchFromIp(out)) return false;
     saveCached(out);

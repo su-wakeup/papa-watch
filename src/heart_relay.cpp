@@ -74,21 +74,32 @@ void begin(const char* pair_id) {
 
 void tick() {
     if (WiFi.status() != WL_CONNECTED) return;
-    if (!s_mqtt.connected()) {
-        // Backoff: 10s between reconnect attempts (was 5s). Each attempt is
-        // now bounded by setSocketTimeout(3) above, so worst-case blockage
-        // is 3s every 10s instead of 15s every 5s.
-        if (millis() - s_last_reconnect_attempt > 10000) {
-            s_last_reconnect_attempt = millis();
-            uint32_t t0 = millis();
-            reconnect();
-            uint32_t dt = millis() - t0;
-            if (dt > 500) {
-                Serial.printf("[mqtt] reconnect took %ums\n", (unsigned)dt);
-            }
-        }
-    } else {
-        s_mqtt.loop();
+    if (s_mqtt.connected()) { s_mqtt.loop(); return; }
+
+    // Reconnect-storm guard: each connect attempt can block ~3s (capped by
+    // setSocketTimeout above). Without a give-up clause that's 3s of stall
+    // every 10s while the broker is down — visible as the stopwatch and
+    // mech-face second hand jumping forward. After 3 consecutive failures
+    // we back off for 5 minutes and let the rest of the loop breathe.
+    static int      s_failures        = 0;
+    static uint32_t s_backoff_until_ms = 0;
+
+    uint32_t now = millis();
+    if (now < s_backoff_until_ms) return;
+    if (now - s_last_reconnect_attempt < 10000) return;
+
+    s_last_reconnect_attempt = now;
+    uint32_t t0 = millis();
+    reconnect();
+    uint32_t dt = millis() - t0;
+    if (dt > 500) Serial.printf("[mqtt] reconnect took %ums\n", (unsigned)dt);
+
+    if (s_mqtt.connected()) {
+        s_failures = 0;
+    } else if (++s_failures >= 3) {
+        s_backoff_until_ms = millis() + 5 * 60 * 1000UL;
+        s_failures = 0;
+        Serial.println("[mqtt] 3 fails → backoff 5 min, main loop freed");
     }
 }
 

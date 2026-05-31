@@ -3,6 +3,7 @@
 #include "ota.h"
 #include "wifi_setup.h"
 #include "dad_status.h"
+#include "geo.h"
 #include <lvgl.h>
 #include <M5Unified.h>
 #include <Preferences.h>
@@ -52,6 +53,7 @@ static lv_obj_t* s_root      = nullptr;
 static lv_obj_t* s_scroll    = nullptr;
 static lv_obj_t* s_wifi_row  = nullptr;
 static lv_obj_t* s_dad_row   = nullptr;
+static lv_obj_t* s_geo_row   = nullptr;
 
 // ── row factory ──────────────────────────────────────────────────────────
 static lv_obj_t* make_row(lv_obj_t* parent) {
@@ -120,6 +122,19 @@ static void on_ota_click(lv_event_t* e) {
     // freezes briefly but it's a deliberate user action.
     bool ok = ota::checkAndUpdate(OTA_MANIFEST_URL, true);
     lv_label_set_text(lbl, ok ? "Up to date / Updated" : "No new release");
+}
+
+static void on_geo_click(lv_event_t*) {
+    // Cycle: Auto → preset 1 → preset 2 → ... → Auto
+    int next = (geo::getOverrideIdx() + 1) % (geo::PRESETS_N + 1);
+    geo::setOverrideIdx(next);
+    if (s_geo_row) {
+        char buf[64];
+        if (next == 0) snprintf(buf, sizeof(buf), "Location: Auto (IP)");
+        else snprintf(buf, sizeof(buf), "Location: %s", geo::PRESETS[next - 1].name);
+        lv_obj_t* lbl = lv_obj_get_child(s_geo_row, 0);
+        lv_label_set_text(lbl, buf);
+    }
 }
 
 static void on_dad_click(lv_event_t*) {
@@ -219,6 +234,18 @@ void enter(lv_obj_t* parent) {
         lv_obj_add_event_cb(row, on_ota_click, LV_EVENT_CLICKED, nullptr);
     }
 
+    // Location override row — cycles Auto → preset cities → Auto
+    {
+        s_geo_row = make_row(s_scroll);
+        int ov = geo::getOverrideIdx();
+        char buf[64];
+        if (ov == 0) snprintf(buf, sizeof(buf), "Location: Auto (IP)");
+        else snprintf(buf, sizeof(buf), "Location: %s", geo::PRESETS[ov - 1].name);
+        row_text(s_geo_row, buf);
+        lv_obj_add_flag(s_geo_row, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_add_event_cb(s_geo_row, on_geo_click, LV_EVENT_CLICKED, nullptr);
+    }
+
     // Dad status override row
     {
         s_dad_row = make_row(s_scroll);
@@ -243,7 +270,7 @@ void enter(lv_obj_t* parent) {
 void leave() {
     if (s_root) { lv_obj_clean(s_root); s_root = nullptr; }
     s_scroll = nullptr;
-    s_wifi_row = s_dad_row = nullptr;
+    s_wifi_row = s_dad_row = s_geo_row = nullptr;
 }
 
 void tick() {}

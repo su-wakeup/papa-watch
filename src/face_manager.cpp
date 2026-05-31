@@ -2,13 +2,14 @@
 #include "face_lcd.h"
 #include "face_mech.h"
 #include "face_alarm.h"
+#include "face_world.h"
 #include <lvgl.h>
 #include <Preferences.h>
 #include <Arduino.h>
 
 namespace face_manager {
 
-static constexpr int N_FACES = 3;            // LCD + mech + term
+static constexpr int N_FACES = 4;            // LCD + mech + alarm + world
 static constexpr const char* NVS_NS  = "face";
 static constexpr const char* NVS_KEY = "idx";
 
@@ -66,8 +67,11 @@ void create() {
     // Tile 1: mechanical analog watch (LILYGO hands)
     face_mech::create(s_tiles[1]);
 
-    // Tile 2: cyber terminal (VT323 phosphor green)
+    // Tile 2: alarm clock (HH/MM rollers + OFF/DAILY/ONCE picker + TEST)
     face_alarm::create(s_tiles[2]);
+
+    // Tile 3: world clock list — 6 cities, PAPA's Beijing focal
+    face_world::create(s_tiles[3]);
 
     lv_tileview_set_tile(s_tileview, s_tiles[s_active_idx], LV_ANIM_OFF);
     lv_obj_add_event_cb(s_tileview, on_value_changed, LV_EVENT_VALUE_CHANGED, nullptr);
@@ -76,10 +80,11 @@ void create() {
 }
 
 void update() {
-    // Cheap to refresh all three each second; only the active tile is visible.
+    // Cheap to refresh all four each second; only the active tile is visible.
     face_lcd::update();
     face_mech::update();
     face_alarm::update();
+    face_world::update();
 }
 
 int currentIndex() { return s_active_idx; }
@@ -90,6 +95,7 @@ void destroy() {
     face_lcd::destroy();
     face_mech::destroy();
     face_alarm::destroy();
+    face_world::destroy();
     if (s_tileview) {
         lv_obj_del(s_tileview);
         s_tileview = nullptr;
