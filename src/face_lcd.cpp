@@ -10,6 +10,7 @@
 
 #include "face_lcd.h"
 #include "dad_status.h"
+#include "tz_helper.h"
 #include <Arduino.h>
 #include <lvgl.h>
 #include <time.h>
@@ -169,8 +170,7 @@ void update() {
     if (!s_time_live) return;
     time_t now = time(nullptr);
 
-    setenv("TZ", TZ_SON, 1); tzset();
-    struct tm son; localtime_r(&now, &son);
+    struct tm son; tz_helper::localtime_in(TZ_SON, now, &son);
 
     // weekday: only current day is lit, others dim
     for (int i = 0; i < 7; i++) {
@@ -198,8 +198,7 @@ void update() {
     lv_label_set_text(s_date, buf);
 
     // dad row
-    setenv("TZ", TZ_DAD, 1); tzset();
-    struct tm dad; localtime_r(&now, &dad);
+    struct tm dad; tz_helper::localtime_in(TZ_DAD, now, &dad);
     snprintf(buf, sizeof(buf), "%02d:%02d", dad.tm_hour, dad.tm_min);
     lv_label_set_text(s_dad_time, buf);
 

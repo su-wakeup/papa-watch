@@ -1,5 +1,6 @@
 #include "alarm.h"
 #include "assets/alarm_chime.h"
+#include "tz_helper.h"
 #include <Arduino.h>
 #include <M5Unified.h>
 #include <Preferences.h>
@@ -96,9 +97,8 @@ void check() {
     }
 
     // PT-local current time
-    setenv("TZ", TZ_SON, 1); tzset();
     time_t now_s = time(nullptr);
-    struct tm t; localtime_r(&now_s, &t);
+    struct tm t; tz_helper::localtime_in(TZ_SON, now_s, &t);
 
     bool match = (t.tm_hour == s_cfg.hour && t.tm_min == s_cfg.minute);
     if (match && !s_fired_this_minute) {

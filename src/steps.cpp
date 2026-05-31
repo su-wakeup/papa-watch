@@ -1,4 +1,5 @@
 #include "steps.h"
+#include "tz_helper.h"
 #include <Arduino.h>
 #include <M5Unified.h>
 #include <Preferences.h>
@@ -27,9 +28,8 @@ static constexpr uint32_t PERSIST_EVERY_MS = 30 * 1000;
 static constexpr const char* TZ_SON = "PST8PDT,M3.2.0,M11.1.0";
 
 static void todayKey(char out[16]) {
-    setenv("TZ", TZ_SON, 1); tzset();
     time_t now = time(nullptr);
-    struct tm t; localtime_r(&now, &t);
+    struct tm t; tz_helper::localtime_in(TZ_SON, now, &t);
     snprintf(out, 16, "%04d%02d%02d",
              1900 + t.tm_year, t.tm_mon + 1, t.tm_mday);
 }

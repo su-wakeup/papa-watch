@@ -1,4 +1,5 @@
 #include "face_world.h"
+#include "tz_helper.h"
 #include <lvgl.h>
 #include <Arduino.h>
 #include <time.h>
@@ -87,8 +88,7 @@ void update() {
     char buf[8];
 
     for (int i = 0; i < N; i++) {
-        setenv("TZ", CITIES[i].tz, 1); tzset();
-        struct tm t; localtime_r(&now, &t);
+        struct tm t; tz_helper::localtime_in(CITIES[i].tz, now, &t);
         snprintf(buf, sizeof(buf), "%02d:%02d", t.tm_hour, t.tm_min);
         lv_label_set_text(s_time_lbl[i], buf);
         lv_label_set_text(s_day_lbl[i], DAYS[t.tm_wday & 7]);

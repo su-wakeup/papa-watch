@@ -1,5 +1,6 @@
 #include "face_term.h"
 #include "dad_status.h"
+#include "tz_helper.h"
 #include <Arduino.h>
 #include <WiFi.h>
 #include <lvgl.h>
@@ -152,11 +153,9 @@ void update() {
     if (!s_root) return;
     time_t now = time(nullptr);
 
-    setenv("TZ", TZ_SON, 1); tzset();
-    struct tm son; localtime_r(&now, &son);
+    struct tm son; tz_helper::localtime_in(TZ_SON, now, &son);
 
-    setenv("TZ", TZ_DAD, 1); tzset();
-    struct tm dad; localtime_r(&now, &dad);
+    struct tm dad; tz_helper::localtime_in(TZ_DAD, now, &dad);
 
     char buf[24];
 

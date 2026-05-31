@@ -1,6 +1,7 @@
 // face_lvgl — Phase 1 watch face. See header for scope.
 
 #include "face_lvgl.h"
+#include "tz_helper.h"
 #include <lvgl.h>
 #include <time.h>
 #include <stdio.h>
@@ -60,8 +61,7 @@ void update() {
     if (!s_time_lbl) return;
     time_t now = time(nullptr);
 
-    setenv("TZ", TZ_SON, 1); tzset();
-    struct tm son; localtime_r(&now, &son);
+    struct tm son; tz_helper::localtime_in(TZ_SON, now, &son);
 
     char buf[32];
     snprintf(buf, sizeof(buf), "%s . %s %d",
@@ -77,8 +77,7 @@ void update() {
     snprintf(buf, sizeof(buf), ":%02d", son.tm_sec);
     lv_label_set_text(s_sec_lbl, buf);
 
-    setenv("TZ", TZ_DAD, 1); tzset();
-    struct tm dad; localtime_r(&now, &dad);
+    struct tm dad; tz_helper::localtime_in(TZ_DAD, now, &dad);
     snprintf(buf, sizeof(buf), "Dad %02d:%02d PEK", dad.tm_hour, dad.tm_min);
     lv_label_set_text(s_dad_lbl, buf);
 }

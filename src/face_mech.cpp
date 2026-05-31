@@ -7,6 +7,7 @@
 #include <math.h>
 #include "steps.h"
 #include "dad_status.h"
+#include "tz_helper.h"
 
 // Hand sprites from LILYGO; sepia portrait generated locally from a family photo.
 LV_IMAGE_DECLARE(ui_img_clockwise_hour_png);
@@ -290,9 +291,8 @@ void update() {
     if (!s_hour) return;
 
     // Stanley's time (PT) drives the analog hands.
-    setenv("TZ", TZ_SON, 1); tzset();
     time_t now = time(nullptr);
-    struct tm t; localtime_r(&now, &t);
+    struct tm t; tz_helper::localtime_in(TZ_SON, now, &t);
 
     int h = t.tm_hour % 12, m = t.tm_min, s = t.tm_sec;
     lv_image_set_rotation(s_hour, (h * 300) + (m * 5));
@@ -312,8 +312,7 @@ void update() {
 
     // PAPA Beijing time + status (auto by his BJ hour, overridable from
     // Telegram via heart_relay's status cmd or from Settings).
-    setenv("TZ", TZ_PAPA, 1); tzset();
-    struct tm tp; localtime_r(&now, &tp);
+    struct tm tp; tz_helper::localtime_in(TZ_PAPA, now, &tp);
     snprintf(buf, sizeof(buf), "%02d:%02d", tp.tm_hour, tp.tm_min);
     lv_label_set_text(s_papa_time, buf);
 
