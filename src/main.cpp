@@ -632,14 +632,27 @@ void loop() {
     // QoS-1 cached at the broker, so none are lost.
     {
         static uint32_t s_last_heap_check_ms = 0;
+        static int      s_low_heap_streak    = 0;
         if (millis() - s_last_heap_check_ms > 10000) {
             s_last_heap_check_ms = millis();
-            uint32_t free_kb = ESP.getFreeHeap() / 1024;
-            if (free_kb < 30) {
-                Serial.printf("[heap] CRITICAL %uKB — auto-restarting\n",
-                              (unsigned)free_kb);
-                delay(200);
-                ESP.restart();
+            uint32_t free_kb = ESP.getFreeHeap()    / 1024;
+            uint32_t min_kb  = ESP.getMinFreeHeap() / 1024;
+            Serial.printf("[heap] free=%uKB min=%uKB streak=%d\n",
+                          (unsigned)free_kb, (unsigned)min_kb,
+                          s_low_heap_streak);
+            // Only restart on *sustained* lows. Transient dips during heavy
+            // UI work (Settings open, WiFi scan, OTA manifest fetch) are
+            // normal and resolve when the widget tree settles — the old
+            // single-sample trigger killed the device whenever a screen
+            // happened to be rendering at the wrong 10s tick.
+            if (free_kb < 25) {
+                if (++s_low_heap_streak >= 3) {       // 3 * 10s = 30s sustained
+                    Serial.printf("[heap] CRITICAL <25KB for 30s — restarting\n");
+                    delay(200);
+                    ESP.restart();
+                }
+            } else {
+                s_low_heap_streak = 0;
             }
         }
     }
