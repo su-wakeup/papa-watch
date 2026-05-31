@@ -119,10 +119,17 @@ static void on_ota_click(lv_event_t* e) {
     lv_obj_t* lbl = lv_obj_get_child(row, 0);
     lv_label_set_text(lbl, "Checking...");
     lv_obj_set_style_text_color(lbl, lv_color_hex(0xE6A050), 0);
-    // checkAndUpdate is blocking; do it from this event handler. The display
-    // freezes briefly but it's a deliberate user action.
-    bool ok = ota::checkAndUpdate(OTA_MANIFEST_URL, true);
-    lv_label_set_text(lbl, ok ? "Up to date / Updated" : "No new release");
+    // Force the "Checking..." text onto the panel before checkAndUpdate
+    // blocks for the manifest fetch (and possibly the firmware download).
+    lv_refr_now(NULL);
+    // force=false: only update when latest tag > FIRMWARE_VERSION. With
+    // force=true the device re-downloads and re-flashes the same firmware
+    // on every tap — locks the UI for 30-60s, then ESP.restart()s back to
+    // the same version, making "Check Updates" look broken.
+    bool started_update = ota::checkAndUpdate(OTA_MANIFEST_URL, false);
+    // If checkAndUpdate kicked off a real update, it ESP.restart()s and
+    // never returns — so reaching here always means "no update applied".
+    lv_label_set_text(lbl, started_update ? "Updating..." : "No new release");
 }
 
 static void on_geo_click(lv_event_t*) {
