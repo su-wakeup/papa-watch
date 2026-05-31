@@ -22,6 +22,7 @@
 #include "face_term.h"
 #include "face_mech.h"
 #include "heart_overlay.h"
+#include "status_bar.h"
 #include "steps.h"
 #include "alarm.h"
 #include "geo.h"
@@ -624,6 +625,25 @@ void loop() {
                       (unsigned)(t4 - t3));
     }
 
+    // ── heap safety net — known runtime leak (≈200B/s) drains 160KB boot
+    // heap to zero in 5-6h. Until we find the leak, auto-reboot below 30KB
+    // so the watch wakes back to a healthy state and the user only loses
+    // a few seconds of UI continuity per cycle. Hearts in flight are
+    // QoS-1 cached at the broker, so none are lost.
+    {
+        static uint32_t s_last_heap_check_ms = 0;
+        if (millis() - s_last_heap_check_ms > 10000) {
+            s_last_heap_check_ms = millis();
+            uint32_t free_kb = ESP.getFreeHeap() / 1024;
+            if (free_kb < 30) {
+                Serial.printf("[heap] CRITICAL %uKB — auto-restarting\n",
+                              (unsigned)free_kb);
+                delay(200);
+                ESP.restart();
+            }
+        }
+    }
+
     // Boot greeting first; then land on the launcher (v0.9.0 — was face_manager
     // pre-launcher). The launcher's "Watch" cell still routes to face_manager,
     // so the path to time is two taps from cold boot.
@@ -746,10 +766,11 @@ void loop() {
         // the Watch app's tick trampoline forwards to it. Status writes below
         // are no-ops on faces whose s_root is null, so they're safe to keep
         // calling regardless of which app is active.
-        face_lcd::setStatus(
-            WiFi.status() == WL_CONNECTED,
-            heart_relay::isConnected(),
-            s_unread_count);
+        bool wifi_up = WiFi.status() == WL_CONNECTED;
+        bool mqtt_up = heart_relay::isConnected();
+        face_lcd::setStatus(wifi_up, mqtt_up, s_unread_count);
+        face_mech::setStatus(wifi_up, mqtt_up);
+        status_bar::update(wifi_up, mqtt_up, s_unread_count);    // no-op off launcher
         face_term::setUnread(s_unread_count);
         face_mech::setUnread(s_unread_count);
     }

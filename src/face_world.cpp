@@ -21,7 +21,7 @@ struct CityRow {
 
 static const CityRow CITIES[] = {
     { "Beijing",  "CST-8",                          true  },   // PAPA — focal
-    { "PT",       "PST8PDT,M3.2.0,M11.1.0",         false },   // Stanley
+    { "Los Gatos","PST8PDT,M3.2.0,M11.1.0",         false },   // Stanley
     { "NYC",      "EST5EDT,M3.2.0,M11.1.0",         false },
     { "London",   "GMT0BST,M3.5.0/1,M10.5.0",       false },
     { "Tokyo",    "JST-9",                          false },

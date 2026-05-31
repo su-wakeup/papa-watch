@@ -17,5 +17,6 @@ void create(lv_obj_t* parent);
 void update();
 void destroy();
 void setUnread(int n);
+void setStatus(bool wifi, bool mqtt);
 
 }  // namespace face_mech

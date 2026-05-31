@@ -1,5 +1,6 @@
 #include "app_launcher.h"
 #include "app.h"
+#include "status_bar.h"
 #include <lvgl.h>
 
 LV_FONT_DECLARE(phosphor_64);
@@ -85,6 +86,10 @@ void enter(lv_obj_t* parent) {
     lv_label_set_text(s_hint_b, "B >");
     lv_obj_align(s_hint_b, LV_ALIGN_BOTTOM_RIGHT, -36, -22);
 
+    // System status only lives on the home screen — watch faces have their
+    // own face-specific indicators; other apps are intentionally clean.
+    status_bar::create(s_root);
+
     render();
 }
 
@@ -95,6 +100,7 @@ void leave() {
     }
     s_icon_left = s_icon_center = s_icon_right = s_name = nullptr;
     s_hint_a = s_hint_b = nullptr;
+    status_bar::destroy();
 }
 
 void tick() {}

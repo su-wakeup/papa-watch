@@ -18,8 +18,8 @@ const Preset PRESETS[] = {
     { "Beijing",   39.90f,  116.41f },
     { "Shanghai",  31.23f,  121.47f },
     { "Hong Kong", 22.32f,  114.17f },
+    { "Los Gatos", 37.23f, -121.97f },                          // Stanley's home
     { "PT-LA",     34.05f, -118.24f },
-    { "PT-SF",     37.77f, -122.42f },
     { "NYC",       40.71f,  -74.01f },
     { "London",    51.51f,   -0.13f },
     { "Tokyo",     35.69f,  139.69f },

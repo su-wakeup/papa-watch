@@ -60,6 +60,11 @@ static lv_obj_t* s_steps_lbl     = nullptr;
 static lv_obj_t* s_steps_arc     = nullptr;
 static lv_obj_t* s_steps_pct     = nullptr;
 static lv_obj_t* s_steps_icon    = nullptr;
+// Brass-styled WiFi + MQTT pair, integrated near the top instead of stickered
+// over the dial. Match the sepia/brass palette so they read as "part of the
+// instrument" not "phone status bar".
+static lv_obj_t* s_wifi_icon     = nullptr;
+static lv_obj_t* s_mqtt_icon     = nullptr;
 static int s_unread = 0;
 
 static constexpr int STEPS_GOAL = 5000;
@@ -171,6 +176,20 @@ void create(lv_obj_t* parent) {
     lv_label_set_text(s_battery, "--%");
     lv_obj_align(s_battery, LV_ALIGN_CENTER, -100, -130);
 
+    // Brass-styled WiFi + MQTT pair on the right, mirroring battery on left.
+    // Default disconnected (dim sepia); setStatus() lights them brass-amber.
+    s_wifi_icon = lv_label_create(s_root);
+    lv_obj_set_style_text_font(s_wifi_icon, &lv_font_montserrat_18, 0);
+    lv_obj_set_style_text_color(s_wifi_icon, lv_color_hex(0x6A4A2C), 0);
+    lv_label_set_text(s_wifi_icon, LV_SYMBOL_WIFI);
+    lv_obj_align(s_wifi_icon, LV_ALIGN_CENTER, 80, -130);
+
+    s_mqtt_icon = lv_label_create(s_root);
+    lv_obj_set_style_text_font(s_mqtt_icon, &lv_font_montserrat_18, 0);
+    lv_obj_set_style_text_color(s_mqtt_icon, lv_color_hex(0x6A4A2C), 0);
+    lv_label_set_text(s_mqtt_icon, LV_SYMBOL_LOOP);
+    lv_obj_align(s_mqtt_icon, LV_ALIGN_CENTER, 112, -130);
+
     // ── steps complication (7 o'clock): arc against goal + count + percent ──
     // Arc: 270° track, opens at 12 o'clock-ish of its own complication face.
     s_steps_arc = lv_arc_create(s_root);
@@ -258,6 +277,15 @@ void setUnread(int n) {
     }
 }
 
+void setStatus(bool wifi, bool mqtt) {
+    // Bright brass when connected, deep sepia when not — sits inside the
+    // sepia/brass palette so it never reads as a "system sticker".
+    if (s_wifi_icon) lv_obj_set_style_text_color(s_wifi_icon,
+        lv_color_hex(wifi ? 0xE6A050 : 0x6A4A2C), 0);
+    if (s_mqtt_icon) lv_obj_set_style_text_color(s_mqtt_icon,
+        lv_color_hex(mqtt ? 0xE6A050 : 0x6A4A2C), 0);
+}
+
 void update() {
     if (!s_hour) return;
 
@@ -334,6 +362,7 @@ void destroy() {
     s_date = s_battery = s_hearts_lbl = s_steps_lbl = nullptr;
     s_steps_arc = s_steps_pct = s_steps_icon = nullptr;
     s_papa_lbl = s_papa_time = s_son_lbl = s_son_time = nullptr;
+    s_wifi_icon = s_mqtt_icon = nullptr;
 }
 
 }  // namespace face_mech
