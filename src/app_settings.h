@@ -3,6 +3,7 @@
 // Persisted values land in the existing "papa-watch" NVS namespace.
 
 #pragma once
+#include <stdint.h>
 
 struct _lv_obj_t;
 typedef struct _lv_obj_t lv_obj_t;
@@ -25,5 +26,9 @@ void apply_on_boot();
 // Other modules (haptics in main.cpp) read this to honour the user's choice
 // to silence the buzzer.
 bool vibrationEnabled();
+
+// wake_gesture reads this to know what "awake" brightness should be after
+// dimming for sleep.
+uint8_t brightness();
 
 }  // namespace app_settings

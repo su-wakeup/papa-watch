@@ -25,6 +25,7 @@
 #include "steps.h"
 #include "alarm.h"
 #include "geo.h"
+#include "wake_gesture.h"
 #include "app.h"
 #include "app_launcher.h"
 #include "app_settings.h"
@@ -573,6 +574,7 @@ void setup() {
 
     steps::init();
     alarms::load();
+    wake_gesture::init();
     // Prime the geo cache once at boot, when we've just confirmed WiFi.
     // Avoids the ~3s sync HTTP call running inside app_sundial::enter()
     // (which was blocking LVGL → mech-face second hand jumping forward).
@@ -613,6 +615,7 @@ void loop() {
     uint32_t t3 = millis();
     steps::update();
     uint32_t t4 = millis();
+    wake_gesture::update();
 
     if (loop_dt > 150) {
         Serial.printf("  ↳ lvgl=%ums  mqtt=%ums  steps=%ums\n",
@@ -650,11 +653,14 @@ void loop() {
         (app_runtime::current() == g_apps[1])           // WATCH app
         && (face_manager::currentIndex() != 2);         // not Alarm tile
 
-    if (tt2.wasPressed() && heart_gesture_ok) {
-        s_hold_start_ms = millis();
-        s_hold_start_x  = tt2.x;
-        s_hold_start_y  = tt2.y;
-        s_hold_armed    = false;
+    if (tt2.wasPressed()) {
+        wake_gesture::notifyActivity();    // any touch keeps screen alive
+        if (heart_gesture_ok) {
+            s_hold_start_ms = millis();
+            s_hold_start_x  = tt2.x;
+            s_hold_start_y  = tt2.y;
+            s_hold_armed    = false;
+        }
     }
     if (s_hold_start_ms && tt2.isPressed()) {
         // Only enforce drift-cancel AFTER the hold is armed. Before that, a
@@ -708,6 +714,7 @@ void loop() {
         bool a_held = M5.BtnA.isPressed();
         bool b_held = M5.BtnB.isPressed();
 
+        if (a_held || b_held) wake_gesture::notifyActivity();
         if (a_held && b_held && !s_combo_fired) {
             s_combo_fired = true;
             if (app_runtime::current() != g_apps[0]) {

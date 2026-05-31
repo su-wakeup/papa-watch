@@ -25,6 +25,7 @@ static uint8_t s_volume        = 180;
 static bool    s_vibration_on  = true;
 
 bool vibrationEnabled() { return s_vibration_on; }
+uint8_t brightness()    { return s_brightness; }
 
 static void load_prefs() {
     Preferences p;
