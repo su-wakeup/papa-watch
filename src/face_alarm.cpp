@@ -11,12 +11,16 @@ LV_FONT_DECLARE(mont_light_32);
 
 namespace face_alarm {
 
+// Mode picker is a single row of three mutually-exclusive pill buttons:
+//   OFF (alarm disabled) | DAILY (repeat every day) | ONCE (one-shot)
+// Replaces the earlier separate ON/OFF switch + DAILY/ONCE pair + preview
+// row — the user found that 5-level vertical stack cramped and fiddly on
+// the round 466 panel.
 static lv_obj_t* s_root        = nullptr;
 static lv_obj_t* s_roller_h    = nullptr;
 static lv_obj_t* s_roller_m    = nullptr;
-static lv_obj_t* s_switch      = nullptr;
-static lv_obj_t* s_preview     = nullptr;
 static lv_obj_t* s_test_btn    = nullptr;
+static lv_obj_t* s_btn_off     = nullptr;
 static lv_obj_t* s_btn_daily   = nullptr;
 static lv_obj_t* s_btn_once    = nullptr;
 
@@ -45,26 +49,14 @@ static void style_mode_btn(lv_obj_t* btn, bool selected) {
 }
 
 static void refresh_mode_buttons() {
-    if (!s_btn_daily || !s_btn_once) return;
-    bool daily = (alarms::get().mode == alarms::REPEAT_DAILY);
-    style_mode_btn(s_btn_daily, daily);
-    style_mode_btn(s_btn_once, !daily);
-}
-
-static void update_preview() {
-    if (!s_preview) return;
+    if (!s_btn_off) return;
     alarms::Config& c = alarms::get();
-    char buf[64];
-    if (c.enabled) {
-        snprintf(buf, sizeof(buf), "Will ring at %02d:%02d  %s",
-                 c.hour, c.minute,
-                 c.mode == alarms::REPEAT_DAILY ? "(daily)" : "(once)");
-        lv_obj_set_style_text_color(s_preview, lv_color_hex(0xE6A050), 0);
-    } else {
-        snprintf(buf, sizeof(buf), "Alarm is off");
-        lv_obj_set_style_text_color(s_preview, lv_color_hex(0x705840), 0);
-    }
-    lv_label_set_text(s_preview, buf);
+    bool off   = !c.enabled;
+    bool daily =  c.enabled && c.mode == alarms::REPEAT_DAILY;
+    bool once  =  c.enabled && c.mode == alarms::REPEAT_ONCE;
+    style_mode_btn(s_btn_off,   off);
+    style_mode_btn(s_btn_daily, daily);
+    style_mode_btn(s_btn_once,  once);
 }
 
 static void style_roller(lv_obj_t* r) {
@@ -86,39 +78,37 @@ static void on_roller_change(lv_event_t* e) {
     if (r == s_roller_h) c.hour   = (uint8_t)v;
     else                 c.minute = (uint8_t)v;
     alarms::save();
-    update_preview();
 }
 
-static void on_switch_change(lv_event_t* e) {
-    lv_obj_t* sw = (lv_obj_t*)lv_event_get_target(e);
-    alarms::get().enabled = lv_obj_has_state(sw, LV_STATE_CHECKED);
+static void on_off_clicked(lv_event_t*) {
+    alarms::get().enabled = false;
     alarms::save();
-    update_preview();
+    refresh_mode_buttons();
+}
+
+static void on_daily_clicked(lv_event_t*) {
+    alarms::get().enabled = true;
+    alarms::get().mode    = alarms::REPEAT_DAILY;
+    alarms::save();
+    refresh_mode_buttons();
+}
+
+static void on_once_clicked(lv_event_t*) {
+    alarms::get().enabled = true;
+    alarms::get().mode    = alarms::REPEAT_ONCE;
+    alarms::save();
+    refresh_mode_buttons();
 }
 
 static void on_test_clicked(lv_event_t*) {
     alarms::fire();
 }
 
-static void on_daily_clicked(lv_event_t*) {
-    alarms::get().mode = alarms::REPEAT_DAILY;
-    alarms::save();
-    refresh_mode_buttons();
-    update_preview();
-}
-
-static void on_once_clicked(lv_event_t*) {
-    alarms::get().mode = alarms::REPEAT_ONCE;
-    alarms::save();
-    refresh_mode_buttons();
-    update_preview();
-}
-
 static lv_obj_t* make_mode_btn(lv_obj_t* parent, const char* text,
-                               int x_off, lv_event_cb_t cb) {
+                               int x_off, int y_off, lv_event_cb_t cb) {
     lv_obj_t* btn = lv_button_create(parent);
-    lv_obj_set_size(btn, 100, 40);
-    lv_obj_align(btn, LV_ALIGN_CENTER, x_off, 80);
+    lv_obj_set_size(btn, 105, 48);
+    lv_obj_align(btn, LV_ALIGN_CENTER, x_off, y_off);
     lv_obj_t* lbl = lv_label_create(btn);
     lv_obj_set_style_text_font(lbl, &mont_light_20, 0);
     lv_label_set_text(lbl, text);
@@ -175,25 +165,16 @@ void create(lv_obj_t* parent) {
     lv_roller_set_selected(s_roller_m, c.minute, LV_ANIM_OFF);
     lv_obj_add_event_cb(s_roller_m, on_roller_change, LV_EVENT_VALUE_CHANGED, nullptr);
 
-    s_switch = lv_switch_create(s_root);
-    lv_obj_set_size(s_switch, 110, 50);
-    lv_obj_align(s_switch, LV_ALIGN_CENTER, 0, 20);
-    if (c.enabled) lv_obj_add_state(s_switch, LV_STATE_CHECKED);
-    lv_obj_set_style_bg_color(s_switch, lv_color_hex(0x4A3828), LV_PART_MAIN);
-    lv_obj_set_style_bg_color(s_switch, lv_color_hex(0xE6A050), (int)LV_PART_INDICATOR | (int)LV_STATE_CHECKED);
-    lv_obj_add_event_cb(s_switch, on_switch_change, LV_EVENT_VALUE_CHANGED, nullptr);
-
-    s_btn_daily = make_mode_btn(s_root, "DAILY", -55, on_daily_clicked);
-    s_btn_once  = make_mode_btn(s_root, "ONCE",   55, on_once_clicked);
+    // One row, three mutually-exclusive states. Plenty of vertical air
+    // above (rollers) and below (TEST) so a thumb can't miss.
+    s_btn_off   = make_mode_btn(s_root, "OFF",   -112, 30, on_off_clicked);
+    s_btn_daily = make_mode_btn(s_root, "DAILY",    0, 30, on_daily_clicked);
+    s_btn_once  = make_mode_btn(s_root, "ONCE",  +112, 30, on_once_clicked);
     refresh_mode_buttons();
 
-    s_preview = lv_label_create(s_root);
-    lv_obj_set_style_text_font(s_preview, &mont_light_14, 0);
-    lv_obj_align(s_preview, LV_ALIGN_CENTER, 0, 125);
-
     s_test_btn = lv_button_create(s_root);
-    lv_obj_set_size(s_test_btn, 190, 52);
-    lv_obj_align(s_test_btn, LV_ALIGN_CENTER, 0, 175);
+    lv_obj_set_size(s_test_btn, 200, 56);
+    lv_obj_align(s_test_btn, LV_ALIGN_CENTER, 0, 130);
     lv_obj_set_style_bg_color(s_test_btn, lv_color_hex(0x2A1B0E), 0);
     lv_obj_set_style_border_color(s_test_btn, lv_color_hex(0x6A4A2C), 0);
     lv_obj_set_style_border_width(s_test_btn, 1, 0);
@@ -205,15 +186,14 @@ void create(lv_obj_t* parent) {
     lv_label_set_text(tlbl, "TEST");
     lv_obj_center(tlbl);
 
-    update_preview();
 }
 
 void update() {}
 
 void destroy() {
     s_root = nullptr;
-    s_roller_h = s_roller_m = s_switch = s_preview = s_test_btn = nullptr;
-    s_btn_daily = s_btn_once = nullptr;
+    s_roller_h = s_roller_m = s_test_btn = nullptr;
+    s_btn_off = s_btn_daily = s_btn_once = nullptr;
 }
 
 }  // namespace face_alarm

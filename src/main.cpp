@@ -616,8 +616,17 @@ void loop() {
     app_runtime::tick();
 
     // ── touch hold → arm → release → send heart to dad ──
+    // Only active on the actual watch-face tiles (LCD and Mechanical).
+    // In Alarm, Stopwatch, Settings, Sundial etc., a 700ms long-press would
+    // otherwise compete with whatever button / switch / roller the finger
+    // is on and steal the gesture. The watch face is the primary heart-send
+    // surface; sub-tiles for controls stay tap-only.
     auto tt2 = M5.Touch.getDetail();
-    if (tt2.wasPressed()) {
+    bool heart_gesture_ok =
+        (app_runtime::current() == g_apps[1])           // WATCH app
+        && (face_manager::currentIndex() != 2);         // not Alarm tile
+
+    if (tt2.wasPressed() && heart_gesture_ok) {
         s_hold_start_ms = millis();
         s_hold_start_x  = tt2.x;
         s_hold_start_y  = tt2.y;

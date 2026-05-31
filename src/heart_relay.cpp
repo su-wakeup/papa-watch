@@ -62,6 +62,12 @@ void begin(const char* pair_id) {
     s_mqtt.setCallback(onMessage);
     s_mqtt.setKeepAlive(30);
     s_mqtt.setBufferSize(256);
+    // Hard-cap every blocking MQTT operation (connect / read / write) at 3s.
+    // Default is 15s on PubSubClient + ESP32 — when broker.emqx.io is slow we
+    // saw the main loop stall for 10+ seconds at a time, mech-face second
+    // hand jumping forward and BtnA+B getting eaten.
+    s_mqtt.setSocketTimeout(3);
+    s_net.setTimeout(3);
 
     reconnect();
 }
@@ -69,9 +75,17 @@ void begin(const char* pair_id) {
 void tick() {
     if (WiFi.status() != WL_CONNECTED) return;
     if (!s_mqtt.connected()) {
-        if (millis() - s_last_reconnect_attempt > 5000) {
+        // Backoff: 10s between reconnect attempts (was 5s). Each attempt is
+        // now bounded by setSocketTimeout(3) above, so worst-case blockage
+        // is 3s every 10s instead of 15s every 5s.
+        if (millis() - s_last_reconnect_attempt > 10000) {
             s_last_reconnect_attempt = millis();
+            uint32_t t0 = millis();
             reconnect();
+            uint32_t dt = millis() - t0;
+            if (dt > 500) {
+                Serial.printf("[mqtt] reconnect took %ums\n", (unsigned)dt);
+            }
         }
     } else {
         s_mqtt.loop();
