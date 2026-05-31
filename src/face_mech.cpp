@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <math.h>
 #include "steps.h"
+#include "dad_status.h"
 
 // Hand sprites from LILYGO; sepia portrait generated locally from a family photo.
 LV_IMAGE_DECLARE(ui_img_clockwise_hour_png);
@@ -281,11 +282,16 @@ void update() {
              days[t.tm_wday & 7], t.tm_mday, months[t.tm_mon % 12]);
     lv_label_set_text(s_date, buf);
 
-    // PAPA Beijing time (world-clock complication).
+    // PAPA Beijing time + status (auto by his BJ hour, overridable from
+    // Telegram via heart_relay's status cmd or from Settings).
     setenv("TZ", TZ_PAPA, 1); tzset();
     struct tm tp; localtime_r(&now, &tp);
     snprintf(buf, sizeof(buf), "%02d:%02d", tp.tm_hour, tp.tm_min);
     lv_label_set_text(s_papa_time, buf);
+
+    dad_status::State dst = dad_status::current(tp.tm_hour);
+    lv_label_set_text(s_papa_lbl, dad_status::label(dst));
+    lv_obj_set_style_text_color(s_papa_lbl, lv_color_hex(dad_status::color(dst)), 0);
 
     // ── battery: charging state changes both icon and tint ──
     int  bat      = M5.Power.getBatteryLevel();
