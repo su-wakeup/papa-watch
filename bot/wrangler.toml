@@ -7,6 +7,8 @@ compatibility_date = "2026-05-29"
 #   WEBHOOK_SECRET       — a random string; Telegram echoes it back in headers
 #                          so we know it's not a forgery
 #   PAPA_CHAT_ID         — Telegram chat ID to receive Stanley → PAPA heart relays
+#   INGEST_TOKEN         — any random string; embedded in /ingest path so
+#                          random scanners can't write to the family-events DB
 #
 # Vars below are non-secret config.
 
@@ -28,3 +30,18 @@ new_sqlite_classes = ["HeartRelay"]
 # Cron Trigger: pokes the DO every minute so it stays loaded + auto-reconnects.
 [triggers]
 crons = ["* * * * *"]
+
+# D1 database for the family events system (papa-watch Phase 1).
+# Create with: npx wrangler d1 create papa-family-events
+# Then paste the printed database_id below and apply schema.sql:
+#   npx wrangler d1 execute papa-family-events --remote --file=schema.sql
+[[d1_databases]]
+binding       = "EVENTS_DB"
+database_name = "papa-family-events"
+database_id   = "8c52f26a-12d6-4397-8cb9-8a60907fd6ed"
+
+# R2 bucket for raw email bodies (D1 rows can't hold large blobs).
+# Create with: npx wrangler r2 bucket create papa-family-raw-emails
+[[r2_buckets]]
+binding     = "EMAILS_R2"
+bucket_name = "papa-family-raw-emails"

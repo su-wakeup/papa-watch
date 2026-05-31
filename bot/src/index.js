@@ -247,6 +247,53 @@ async function handleTelegram(update, env) {
     await telegramSend(env.TELEGRAM_BOT_TOKEN, chatId, `unknown: ${text}\n${HELP}`);
 }
 
+// ─── Family-events ingest (Phase 1) ────────────────────────────────────────
+// Accepts an email-shaped JSON payload, stores the body in R2 and a metadata
+// row in D1. Phase 2 (LLM extractor) reads `raw_emails WHERE processed = 0`
+// and populates `events`. See bot/schema.sql for the table definitions.
+async function handleIngestEmail(request, env) {
+    if (!env.EVENTS_DB) return new Response("D1 not bound (EVENTS_DB)", { status: 500 });
+    if (!env.EMAILS_R2) return new Response("R2 not bound (EMAILS_R2)", { status: 500 });
+
+    const payload = await request.json();
+    const { from, to = null, subject = null, body } = payload;
+    const received_at = payload.received_at || Math.floor(Date.now() / 1000);
+
+    if (!from || !body) {
+        return new Response("required: from, body", { status: 400 });
+    }
+
+    // Resolve source by email_match suffix. NULL = unknown sender; row still
+    // gets stored so we can backfill source_id later once we add the match.
+    const source = await env.EVENTS_DB.prepare(
+        `SELECT id FROM sources
+            WHERE email_match IS NOT NULL
+              AND ? LIKE '%' || email_match
+            LIMIT 1`
+    ).bind(from).first();
+    const source_id = source?.id ?? null;
+
+    // Insert the row first so we have an id for the R2 key.
+    const ins = await env.EVENTS_DB.prepare(
+        `INSERT INTO raw_emails
+            (source_id, from_address, to_address, subject, received_at, r2_key, bytes)
+         VALUES (?, ?, ?, ?, ?, '', ?)`
+    ).bind(source_id, from, to, subject, received_at, body.length).run();
+    const id = ins.meta.last_row_id;
+    const r2_key = `raw/${id}.txt`;
+
+    await env.EMAILS_R2.put(r2_key, body, {
+        httpMetadata: { contentType: "text/plain; charset=utf-8" },
+    });
+    await env.EVENTS_DB.prepare(
+        `UPDATE raw_emails SET r2_key = ? WHERE id = ?`
+    ).bind(r2_key, id).run();
+
+    return new Response(JSON.stringify({
+        ok: true, id, source_id, r2_key, bytes: body.length,
+    }), { headers: { "content-type": "application/json" } });
+}
+
 // ─── Durable Object: HeartRelay ────────────────────────────────────────────
 // Stanley's watch publishes to `stopwatch/<pair>/from-son` over MQTT.
 // A stateless Worker can't subscribe long-lived, so we park a Durable Object
@@ -406,6 +453,21 @@ export default {
         // Manual poke — same thing cron does, useful for first-time bring-up.
         if (request.method === "GET" && url.pathname === "/relay/poke") {
             return getRelay(env).fetch("https://do/poke");
+        }
+
+        // Family-events ingest. Phase 1: HTTP-only — Cloudflare Email
+        // Routing isn't wired up yet, so callers (curl, Gmail filter via
+        // a forwarder, or future Email Worker) POST here directly. Path
+        // embeds INGEST_TOKEN so random scanners can't spam D1.
+        //   curl -X POST https://<worker>/ingest/<token>/email \
+        //        -H "content-type: application/json" \
+        //        -d '{"from":"...","to":"...","subject":"...","body":"..."}'
+        if (request.method === "POST" &&
+            url.pathname === `/ingest/${env.INGEST_TOKEN}/email`) {
+            return handleIngestEmail(request, env).catch((e) => {
+                console.error("[ingest] threw:", e.message);
+                return new Response(`ingest failed: ${e.message}`, { status: 500 });
+            });
         }
 
         // Telegram webhook. Path includes the WEBHOOK_SECRET so unauthenticated

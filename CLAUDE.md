@@ -30,6 +30,13 @@ family is mostly apart. Treat it accordingly — emotional weight matters here.
 * Memory is precious. Don't allocate per-frame. Don't redraw what didn't change.
 * Don't write multi-paragraph header comments. One short line when WHY is
   non-obvious; never WHAT.
+* **Time-zone calls**: never call `setenv("TZ",...)+tzset()` per-tick directly.
+  ESP32 newlib's `tzset()` leaks ~40 B/call; at face-update rates this
+  triggers the heap watchdog within hours. Always go through
+  `tz_helper::localtime_in(tz, epoch, &tm_out)` — it caches the offset per
+  zone for 60 s. (Also: `timezone` global is not exported by ESP32 newlib,
+  and `tm_gmtoff` isn't portable — recover the offset by diffing
+  `localtime_r` and `gmtime_r` of the same epoch.)
 
 ## Talking to the user
 
