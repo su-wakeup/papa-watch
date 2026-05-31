@@ -2,13 +2,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-// `timezone` is the newlib global set by tzset() — offset of standard time
-// from UTC in seconds, positive west. The declaration in <time.h> already
-// has C linkage; re-declare it here at file scope so the linker resolves
-// `timezone` (the C global) instead of `tz_helper::timezone` (which a
-// declaration inside the namespace below would otherwise introduce).
-extern long timezone;
-
 namespace tz_helper {
 
 // Up to 8 distinct zones in-flight at once. face_world peaks at 6 cities;
@@ -30,13 +23,22 @@ static void refresh(Slot& slot, const char* tz, time_t epoch, struct tm* out) {
     tzset();
     localtime_r(&epoch, out);
 
-    // `timezone` (declared above at file scope) holds the std-time offset
-    // west of UTC. Add an hour if DST is currently active for this epoch.
-    int offset = -(int)timezone + (out->tm_isdst > 0 ? 3600 : 0);
+    // Recover the offset by comparing local and UTC for the same epoch.
+    // tm_gmtoff isn't portable across newlib configs, and the `timezone`
+    // global isn't exported by ESP32's newlib build — but local-minus-utc
+    // works on any libc that implements gmtime_r and localtime_r.
+    struct tm utc;
+    gmtime_r(&epoch, &utc);
+    long local_sec = out->tm_hour * 3600L + out->tm_min * 60L + out->tm_sec;
+    long utc_sec   = utc.tm_hour  * 3600L + utc.tm_min  * 60L + utc.tm_sec;
+    long offset    = local_sec - utc_sec;
+    // Handle the day boundary (e.g. PT 23:00 vs UTC 07:00 next day).
+    if (offset >  43200) offset -= 86400;
+    if (offset < -43200) offset += 86400;
 
     slot.tz_str         = tz;
     slot.valid_until    = epoch + 60;     // 60s — DST flips are coarse enough
-    slot.offset_seconds = offset;
+    slot.offset_seconds = (int)offset;
 }
 
 // Reconstruct struct tm from epoch + cached offset without touching tzset.
