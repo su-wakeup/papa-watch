@@ -2,6 +2,13 @@
 #include <stdlib.h>
 #include <string.h>
 
+// `timezone` is the newlib global set by tzset() — offset of standard time
+// from UTC in seconds, positive west. The declaration in <time.h> already
+// has C linkage; re-declare it here at file scope so the linker resolves
+// `timezone` (the C global) instead of `tz_helper::timezone` (which a
+// declaration inside the namespace below would otherwise introduce).
+extern long timezone;
+
 namespace tz_helper {
 
 // Up to 8 distinct zones in-flight at once. face_world peaks at 6 cities;
@@ -23,10 +30,8 @@ static void refresh(Slot& slot, const char* tz, time_t epoch, struct tm* out) {
     tzset();
     localtime_r(&epoch, out);
 
-    // newlib exposes the std-time offset via the global `timezone` (in
-    // seconds, positive west of UTC, i.e. it's negated relative to ISO).
-    // Add an hour if DST is currently active for this epoch.
-    extern long timezone;
+    // `timezone` (declared above at file scope) holds the std-time offset
+    // west of UTC. Add an hour if DST is currently active for this epoch.
     int offset = -(int)timezone + (out->tm_isdst > 0 ? 3600 : 0);
 
     slot.tz_str         = tz;
