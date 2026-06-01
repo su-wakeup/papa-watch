@@ -74,17 +74,19 @@ static void buildEventCard(lv_obj_t* parent, const events_store::Event& e) {
     lv_obj_t* date_lbl = lv_label_create(card);
     lv_obj_set_style_text_font(date_lbl, &mont_light_14, 0);
     lv_obj_set_style_text_color(date_lbl, lv_color_hex(COL_AMBER), 0);
+    lv_obj_set_style_text_align(date_lbl, LV_TEXT_ALIGN_CENTER, 0);
     lv_label_set_text(date_lbl, date_line);
-    lv_obj_align(date_lbl, LV_ALIGN_TOP_LEFT, 4, 2);
+    lv_obj_align(date_lbl, LV_ALIGN_TOP_MID, 0, 2);
 
     // Title — main line.
     lv_obj_t* title_lbl = lv_label_create(card);
     lv_obj_set_style_text_font(title_lbl, &mont_light_20, 0);
     lv_obj_set_style_text_color(title_lbl, lv_color_hex(COL_INK), 0);
+    lv_obj_set_style_text_align(title_lbl, LV_TEXT_ALIGN_CENTER, 0);
     lv_label_set_long_mode(title_lbl, LV_LABEL_LONG_DOT);
     lv_obj_set_width(title_lbl, CARD_WIDTH - 16);
     lv_label_set_text(title_lbl, e.title[0] ? e.title : "(untitled)");
-    lv_obj_align(title_lbl, LV_ALIGN_TOP_LEFT, 4, 22);
+    lv_obj_align(title_lbl, LV_ALIGN_TOP_MID, 0, 22);
 
     // Time + location.
     char meta[80];
@@ -101,10 +103,11 @@ static void buildEventCard(lv_obj_t* parent, const events_store::Event& e) {
         lv_obj_t* meta_lbl = lv_label_create(card);
         lv_obj_set_style_text_font(meta_lbl, &mont_light_14, 0);
         lv_obj_set_style_text_color(meta_lbl, lv_color_hex(COL_DIM), 0);
+        lv_obj_set_style_text_align(meta_lbl, LV_TEXT_ALIGN_CENTER, 0);
         lv_label_set_long_mode(meta_lbl, LV_LABEL_LONG_DOT);
         lv_obj_set_width(meta_lbl, CARD_WIDTH - 16);
         lv_label_set_text(meta_lbl, meta);
-        lv_obj_align(meta_lbl, LV_ALIGN_TOP_LEFT, 4, 48);
+        lv_obj_align(meta_lbl, LV_ALIGN_TOP_MID, 0, 48);
     }
 
     // Source attribution. (em-dash isn't in the current font subset → tofu;
@@ -115,10 +118,11 @@ static void buildEventCard(lv_obj_t* parent, const events_store::Event& e) {
         lv_obj_t* src_lbl = lv_label_create(card);
         lv_obj_set_style_text_font(src_lbl, &mont_light_14, 0);
         lv_obj_set_style_text_color(src_lbl, lv_color_hex(COL_DIM), 0);
+        lv_obj_set_style_text_align(src_lbl, LV_TEXT_ALIGN_CENTER, 0);
         lv_label_set_long_mode(src_lbl, LV_LABEL_LONG_DOT);
         lv_obj_set_width(src_lbl, CARD_WIDTH - 16);
         lv_label_set_text(src_lbl, src_buf);
-        lv_obj_align(src_lbl, LV_ALIGN_TOP_LEFT, 4, meta[0] ? 66 : 48);
+        lv_obj_align(src_lbl, LV_ALIGN_TOP_MID, 0, meta[0] ? 66 : 48);
     }
 
     // Manually size based on rough text height. mont_light_14 ≈ 18 px,
