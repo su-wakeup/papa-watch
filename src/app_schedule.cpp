@@ -70,9 +70,9 @@ static void buildEventCard(lv_obj_t* parent, const events_store::Event& e) {
                  h12, tm.tm_min, tm.tm_hour < 12 ? "AM" : "PM");
     }
 
-    // Date line — small amber tag at top of card.
+    // Date line — amber tag at top of card.
     lv_obj_t* date_lbl = lv_label_create(card);
-    lv_obj_set_style_text_font(date_lbl, &mont_light_14, 0);
+    lv_obj_set_style_text_font(date_lbl, &mont_light_20, 0);
     lv_obj_set_style_text_color(date_lbl, lv_color_hex(COL_AMBER), 0);
     lv_obj_set_style_text_align(date_lbl, LV_TEXT_ALIGN_CENTER, 0);
     lv_label_set_text(date_lbl, date_line);
@@ -80,13 +80,13 @@ static void buildEventCard(lv_obj_t* parent, const events_store::Event& e) {
 
     // Title — main line.
     lv_obj_t* title_lbl = lv_label_create(card);
-    lv_obj_set_style_text_font(title_lbl, &mont_light_20, 0);
+    lv_obj_set_style_text_font(title_lbl, &mont_light_24, 0);
     lv_obj_set_style_text_color(title_lbl, lv_color_hex(COL_INK), 0);
     lv_obj_set_style_text_align(title_lbl, LV_TEXT_ALIGN_CENTER, 0);
     lv_label_set_long_mode(title_lbl, LV_LABEL_LONG_DOT);
     lv_obj_set_width(title_lbl, CARD_WIDTH - 16);
     lv_label_set_text(title_lbl, e.title[0] ? e.title : "(untitled)");
-    lv_obj_align(title_lbl, LV_ALIGN_TOP_MID, 0, 22);
+    lv_obj_align(title_lbl, LV_ALIGN_TOP_MID, 0, 30);
 
     // Time + location.
     char meta[80];
@@ -101,13 +101,13 @@ static void buildEventCard(lv_obj_t* parent, const events_store::Event& e) {
     }
     if (meta[0]) {
         lv_obj_t* meta_lbl = lv_label_create(card);
-        lv_obj_set_style_text_font(meta_lbl, &mont_light_14, 0);
+        lv_obj_set_style_text_font(meta_lbl, &mont_light_20, 0);
         lv_obj_set_style_text_color(meta_lbl, lv_color_hex(COL_DIM), 0);
         lv_obj_set_style_text_align(meta_lbl, LV_TEXT_ALIGN_CENTER, 0);
         lv_label_set_long_mode(meta_lbl, LV_LABEL_LONG_DOT);
         lv_obj_set_width(meta_lbl, CARD_WIDTH - 16);
         lv_label_set_text(meta_lbl, meta);
-        lv_obj_align(meta_lbl, LV_ALIGN_TOP_MID, 0, 48);
+        lv_obj_align(meta_lbl, LV_ALIGN_TOP_MID, 0, 62);
     }
 
     // Source attribution. (em-dash isn't in the current font subset → tofu;
@@ -116,24 +116,25 @@ static void buildEventCard(lv_obj_t* parent, const events_store::Event& e) {
         char src_buf[40];
         snprintf(src_buf, sizeof(src_buf), "from %s", e.source);
         lv_obj_t* src_lbl = lv_label_create(card);
-        lv_obj_set_style_text_font(src_lbl, &mont_light_14, 0);
+        lv_obj_set_style_text_font(src_lbl, &mont_light_20, 0);
         lv_obj_set_style_text_color(src_lbl, lv_color_hex(COL_DIM), 0);
         lv_obj_set_style_text_align(src_lbl, LV_TEXT_ALIGN_CENTER, 0);
         lv_label_set_long_mode(src_lbl, LV_LABEL_LONG_DOT);
         lv_obj_set_width(src_lbl, CARD_WIDTH - 16);
         lv_label_set_text(src_lbl, src_buf);
-        lv_obj_align(src_lbl, LV_ALIGN_TOP_MID, 0, meta[0] ? 66 : 48);
+        lv_obj_align(src_lbl, LV_ALIGN_TOP_MID, 0, meta[0] ? 90 : 62);
     }
 
-    // Manually size based on rough text height. mont_light_14 ≈ 18 px,
-    // mont_light_20 ≈ 24. Date (22) + title (24) + meta (18) + src (18)
-    // + 12 pad = ~94 px. Keep simple; LV_SIZE_CONTENT often misses on
-    // absolutely-positioned children.
-    int h = 28;                            // date band
-    h += 26;                               // title
-    if (meta[0])   h += 20;
-    if (e.source[0]) h += 20;
-    h += 12;                               // bottom pad
+    // Card height tracks the new font sizes:
+    //   date (font 20, ~24 px line) → 28 incl. top pad
+    //   title (font 24, ~28 px line) → 32
+    //   meta (font 20) → 24 when present
+    //   source (font 20) → 24 when present
+    //   bottom pad → 12
+    int h = 28 + 32;
+    if (meta[0])     h += 24;
+    if (e.source[0]) h += 24;
+    h += 12;
     lv_obj_set_height(card, h);
 }
 
