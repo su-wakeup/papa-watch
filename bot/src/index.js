@@ -268,12 +268,14 @@ async function handleIngestEmail(request, env, ctx) {
         return new Response("required: from, body", { status: 400 });
     }
 
-    // Resolve source by email_match suffix. NULL = unknown sender; row still
-    // gets stored so we can backfill source_id later once we add the match.
+    // Resolve source by email_match substring. Contains-match (not suffix) so
+    // it works on Gmail's full From header — `Display Name <addr@host>` — whose
+    // trailing '>' would defeat a pure suffix match. NULL = unknown sender; row
+    // still gets stored so we can backfill source_id later once we add the match.
     const source = await env.EVENTS_DB.prepare(
         `SELECT id FROM sources
             WHERE email_match IS NOT NULL
-              AND ? LIKE '%' || email_match
+              AND ? LIKE '%' || email_match || '%'
             LIMIT 1`
     ).bind(from).first();
     const source_id = source?.id ?? null;
