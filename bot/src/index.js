@@ -278,7 +278,11 @@ async function handleIngestEmail(request, env, ctx) {
               AND ? LIKE '%' || email_match || '%'
             LIMIT 1`
     ).bind(from).first();
-    const source_id = source?.id ?? null;
+    // Anything the Gmail filter forwarded is Lakeside-relevant by construction,
+    // but teacher/personal senders won't carry "Lakeside" in their From. Fall
+    // back to the Lakeside source (id 1) so their events still fan out instead
+    // of stranding at source_id=NULL.
+    const source_id = source?.id ?? 1;
 
     // Insert the row first so we have an id for the R2 key.
     const ins = await env.EVENTS_DB.prepare(
