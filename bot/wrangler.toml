@@ -9,6 +9,8 @@ compatibility_date = "2026-05-29"
 #   PAPA_CHAT_ID         — Telegram chat ID to receive Stanley → PAPA heart relays
 #   INGEST_TOKEN         — any random string; embedded in /ingest path so
 #                          random scanners can't write to the family-events DB
+#   GEMINI_API_KEY       — Google AI Studio key (aistudio.google.com); when
+#                          set, Phase 2 extractor runs on every ingest + cron
 #
 # Vars below are non-secret config.
 

@@ -251,7 +251,7 @@ async function handleTelegram(update, env) {
 // Accepts an email-shaped JSON payload, stores the body in R2 and a metadata
 // row in D1. Phase 2 (LLM extractor) reads `raw_emails WHERE processed = 0`
 // and populates `events`. See bot/schema.sql for the table definitions.
-async function handleIngestEmail(request, env) {
+async function handleIngestEmail(request, env, ctx) {
     if (!env.EVENTS_DB) return new Response("D1 not bound (EVENTS_DB)", { status: 500 });
     if (!env.EMAILS_R2) return new Response("R2 not bound (EMAILS_R2)", { status: 500 });
 
@@ -289,9 +289,189 @@ async function handleIngestEmail(request, env) {
         `UPDATE raw_emails SET r2_key = ? WHERE id = ?`
     ).bind(r2_key, id).run();
 
+    // Fire-and-forget extraction so the caller (or future Email Worker) gets
+    // an immediate 200 instead of waiting on Gemini. Cron will sweep any
+    // dropped attempts.
+    if (env.GEMINI_API_KEY && ctx) {
+        ctx.waitUntil(extractEvents(env, id).catch((e) =>
+            console.error(`[extract] id=${id} threw:`, e.message)));
+    }
+
     return new Response(JSON.stringify({
         ok: true, id, source_id, r2_key, bytes: body.length,
     }), { headers: { "content-type": "application/json" } });
+}
+
+// ─── Family-events extractor (Phase 2) ─────────────────────────────────────
+// Reads one raw_emails row + its R2 body, asks Gemini 2.5 Flash for any
+// structured calendar events it can find, and INSERTs them into the events
+// table. Claims the row up-front with an atomic UPDATE so the per-ingest
+// path and the cron sweep can't double-extract; on LLM failure we release
+// the claim so cron retries next tick.
+//
+// Cost: Lakeside likely sends < 50 emails/year. Free tier (Gemini Flash
+// has a generous free quota) more than covers this.
+
+const EXTRACT_SCHEMA = {
+    type: "OBJECT",
+    properties: {
+        events: {
+            type: "ARRAY",
+            items: {
+                type: "OBJECT",
+                properties: {
+                    title:       { type: "STRING" },
+                    kind:        { type: "STRING",
+                                   enum: ["performance", "field-trip", "deadline",
+                                          "meeting", "holiday", "other"] },
+                    starts_at:   { type: "STRING",
+                                   description: "ISO 8601 with timezone offset; empty string if unknown" },
+                    ends_at:     { type: "STRING",
+                                   description: "ISO 8601 with timezone offset; empty string if unknown" },
+                    location:    { type: "STRING" },
+                    description: { type: "STRING" },
+                    confidence:  { type: "NUMBER",
+                                   description: "0..1 — how sure are you this is a real, dated event" },
+                },
+                required: ["title", "kind", "confidence"],
+            },
+        },
+    },
+    required: ["events"],
+};
+
+function buildExtractPrompt(row, body) {
+    const today = new Date().toISOString().slice(0, 10);
+    return `You extract calendar events from school emails for the parents of a
+Lakeside Elementary student (Los Gatos, CA — Pacific Time, currently
+${today}). Return ZERO or more events as JSON matching the schema.
+
+For each event:
+- title: short, human-friendly (e.g. "Spring Concert")
+- kind: pick the closest match from the enum
+- starts_at / ends_at: ISO 8601 with Pacific Time offset (e.g.
+  "2026-06-07T18:00:00-07:00"). Empty string if not stated.
+- location: as written, empty string if not stated
+- description: one sentence of context
+- confidence: 0..1. Lower when the date is fuzzy or it's not a real event
+  (newsletters, reminders without dates, etc.).
+
+If the email has no concrete event (general newsletter, fundraising
+appeal, policy notice), return events: [].
+
+FROM: ${row.from_address}
+SUBJECT: ${row.subject || "(none)"}
+
+BODY:
+${body}`;
+}
+
+async function callGemini(env, prompt) {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/`
+              + `gemini-2.5-flash:generateContent?key=${env.GEMINI_API_KEY}`;
+    const resp = await fetch(url, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+            contents: [{ role: "user", parts: [{ text: prompt }] }],
+            generationConfig: {
+                responseMimeType: "application/json",
+                responseSchema: EXTRACT_SCHEMA,
+                temperature: 0.1,
+            },
+        }),
+    });
+    if (!resp.ok) {
+        const text = await resp.text();
+        throw new Error(`gemini ${resp.status}: ${text.slice(0, 300)}`);
+    }
+    const data = await resp.json();
+    const jsonText = data.candidates?.[0]?.content?.parts?.[0]?.text;
+    if (!jsonText) throw new Error("gemini: no candidate text");
+    return JSON.parse(jsonText);
+}
+
+// ISO 8601 string → unix epoch seconds, or null if blank/unparseable.
+function parseIsoToEpoch(s) {
+    if (!s) return null;
+    const ms = Date.parse(s);
+    return Number.isFinite(ms) ? Math.floor(ms / 1000) : null;
+}
+
+async function extractEvents(env, raw_email_id) {
+    if (!env.GEMINI_API_KEY) return { ok: false, error: "GEMINI_API_KEY not set" };
+
+    // Atomic claim — only one caller succeeds; subsequent calls no-op.
+    const claim = await env.EVENTS_DB.prepare(
+        `UPDATE raw_emails SET processed = 1 WHERE id = ? AND processed = 0`
+    ).bind(raw_email_id).run();
+    if (claim.meta.changes === 0) {
+        return { ok: true, id: raw_email_id, skipped: "already processed" };
+    }
+
+    try {
+        const row = await env.EVENTS_DB.prepare(
+            `SELECT id, from_address, subject, r2_key FROM raw_emails WHERE id = ?`
+        ).bind(raw_email_id).first();
+        if (!row) throw new Error("row missing after claim");
+
+        const obj = await env.EMAILS_R2.get(row.r2_key);
+        if (!obj) throw new Error(`R2 miss: ${row.r2_key}`);
+        const body = await obj.text();
+
+        const result = await callGemini(env, buildExtractPrompt(row, body));
+        const events = Array.isArray(result.events) ? result.events : [];
+
+        for (const ev of events) {
+            await env.EVENTS_DB.prepare(
+                `INSERT INTO events
+                    (raw_email_id, title, kind, starts_at, ends_at,
+                     location, description, confidence)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+            ).bind(
+                raw_email_id,
+                ev.title,
+                ev.kind || null,
+                parseIsoToEpoch(ev.starts_at),
+                parseIsoToEpoch(ev.ends_at),
+                ev.location || null,
+                ev.description || null,
+                ev.confidence ?? null,
+            ).run();
+        }
+
+        // Placeholder so the admin view shows "looked at, found nothing".
+        if (events.length === 0) {
+            await env.EVENTS_DB.prepare(
+                `INSERT INTO events (raw_email_id, title, kind, confidence)
+                 VALUES (?, '(no event)', 'none', 1.0)`
+            ).bind(raw_email_id).run();
+        }
+
+        console.log(`[extract] id=${raw_email_id} → ${events.length} event(s)`);
+        return { ok: true, id: raw_email_id, events_found: events.length };
+    } catch (e) {
+        // Release the claim so cron retries.
+        await env.EVENTS_DB.prepare(
+            `UPDATE raw_emails SET processed = 0 WHERE id = ?`
+        ).bind(raw_email_id).run();
+        throw e;
+    }
+}
+
+// Sweep up to `limit` unprocessed rows. Called from cron + the manual
+// /extract/<token>/run endpoint. Returns per-row results for debugging.
+async function extractAllUnprocessed(env, limit = 25) {
+    const { results } = await env.EVENTS_DB.prepare(
+        `SELECT id FROM raw_emails WHERE processed = 0 ORDER BY id ASC LIMIT ?`
+    ).bind(limit).all();
+
+    const out = [];
+    for (const r of results) {
+        try { out.push(await extractEvents(env, r.id)); }
+        catch (e) { out.push({ id: r.id, ok: false, error: e.message }); }
+    }
+    return out;
 }
 
 // ─── Durable Object: HeartRelay ────────────────────────────────────────────
@@ -464,10 +644,21 @@ export default {
         //        -d '{"from":"...","to":"...","subject":"...","body":"..."}'
         if (request.method === "POST" &&
             url.pathname === `/ingest/${env.INGEST_TOKEN}/email`) {
-            return handleIngestEmail(request, env).catch((e) => {
+            return handleIngestEmail(request, env, ctx).catch((e) => {
                 console.error("[ingest] threw:", e.message);
                 return new Response(`ingest failed: ${e.message}`, { status: 500 });
             });
+        }
+
+        // Manual extractor sweep — sweeps `processed = 0` raw_emails through
+        // Gemini. Same token as ingest. Useful after rotating GEMINI_API_KEY
+        // or for catching up after a cold backlog.
+        if (request.method === "GET" &&
+            url.pathname === `/extract/${env.INGEST_TOKEN}/run`) {
+            const limit = parseInt(url.searchParams.get("limit") || "25", 10);
+            const results = await extractAllUnprocessed(env, limit);
+            return new Response(JSON.stringify({ ok: true, results }, null, 2),
+                { headers: { "content-type": "application/json" } });
         }
 
         // Telegram webhook. Path includes the WEBHOOK_SECRET so unauthenticated
@@ -488,9 +679,16 @@ export default {
         return new Response("not found", { status: 404 });
     },
 
-    // Cron Trigger — pokes the relay so the DO stays loaded + reconnects on drop.
+    // Cron Trigger — pokes the relay so the DO stays loaded + reconnects on
+    // drop, and sweeps any unprocessed raw_emails through the LLM extractor.
+    // The extractor's first step is a cheap D1 SELECT, so when there's no
+    // work it costs essentially nothing (no Gemini call).
     async scheduled(event, env, ctx) {
         ctx.waitUntil(getRelay(env).fetch("https://do/poke").catch((e) =>
             console.error("[cron] poke failed:", e.message)));
+        if (env.GEMINI_API_KEY && env.EVENTS_DB) {
+            ctx.waitUntil(extractAllUnprocessed(env).catch((e) =>
+                console.error("[cron] extract sweep failed:", e.message)));
+        }
     },
 };
