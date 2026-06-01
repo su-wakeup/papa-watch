@@ -32,6 +32,7 @@
 #include "app_settings.h"
 #include "dad_status.h"
 #include "heart_relay.h"
+#include "events_store.h"
 #include "ota.h"
 #include <ArduinoJson.h>
 #include "audio/cow_moo.h"
@@ -524,6 +525,7 @@ void setup() {
             face_lcd::showAlert("DAD HEART", 0x90FFA6, 4000);
         }
     });
+    events_store::begin();
     heart_relay::begin("stanley-dad-2026");
 
     Serial.printf("[ota] firmware v%s\n", ota::FIRMWARE_VERSION);

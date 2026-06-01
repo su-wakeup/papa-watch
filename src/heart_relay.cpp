@@ -1,7 +1,9 @@
 #include "heart_relay.h"
+#include "events_store.h"
 #include <WiFi.h>
 #include <PubSubClient.h>
 #include <time.h>
+#include <string.h>
 
 namespace heart_relay {
 
@@ -11,6 +13,7 @@ static constexpr int         BROKER_PORT = 1883;
 static String        s_pair_id;
 static String        s_topic_pub;
 static String        s_topic_sub;
+static String        s_topic_events;             // events/<pair>/+
 static String        s_client_id;
 static WiFiClient    s_net;
 static PubSubClient  s_mqtt(s_net);
@@ -19,7 +22,15 @@ static uint32_t      s_last_reconnect_attempt = 0;
 static uint32_t      s_last_recv_ts           = 0;
 
 static void onMessage(char* topic, byte* payload, unsigned int length) {
-    // dedupe by payload timestamp (cheap parse)
+    // events/<pair>/<id> → route to events_store, skip dedupe-by-ts which is
+    // specific to heart payloads.
+    if (strncmp(topic, "events/", 7) == 0) {
+        Serial.printf("[mqtt] RX EVENT %s len=%u\n", topic, length);
+        events_store::onMqttEvent(topic, payload, length);
+        return;
+    }
+
+    // dedupe by payload timestamp (cheap parse) — heart messages only.
     uint32_t ts = 0;
     for (unsigned i = 0; i < length; i++) {
         char c = (char)payload[i];
@@ -43,8 +54,11 @@ static void reconnect() {
                   BROKER_HOST, BROKER_PORT, s_client_id.c_str());
     if (s_mqtt.connect(s_client_id.c_str())) {
         Serial.println("[mqtt] connected");
-        s_mqtt.subscribe(s_topic_sub.c_str(), 1);   // QoS 1
+        s_mqtt.subscribe(s_topic_sub.c_str(),    1);  // heart, QoS 1
+        s_mqtt.subscribe(s_topic_events.c_str(), 0);  // events wildcard, QoS 0
+                                                       // (retained, replays on connect)
         Serial.printf("[mqtt] sub: %s\n", s_topic_sub.c_str());
+        Serial.printf("[mqtt] sub: %s\n", s_topic_events.c_str());
         Serial.printf("[mqtt] pub: %s\n", s_topic_pub.c_str());
     } else {
         Serial.printf("[mqtt] connect failed rc=%d\n", s_mqtt.state());
@@ -52,16 +66,20 @@ static void reconnect() {
 }
 
 void begin(const char* pair_id) {
-    s_pair_id   = pair_id;
-    s_topic_pub = String("stopwatch/") + pair_id + "/from-son";
-    s_topic_sub = String("stopwatch/") + pair_id + "/from-dad";
-    s_client_id = String("stopwatch-son-") +
-                  String((uint32_t)(ESP.getEfuseMac() & 0xFFFFFFFF), HEX);
+    s_pair_id      = pair_id;
+    s_topic_pub    = String("stopwatch/") + pair_id + "/from-son";
+    s_topic_sub    = String("stopwatch/") + pair_id + "/from-dad";
+    s_topic_events = String("events/")    + pair_id + "/+";
+    s_client_id    = String("stopwatch-son-") +
+                     String((uint32_t)(ESP.getEfuseMac() & 0xFFFFFFFF), HEX);
 
     s_mqtt.setServer(BROKER_HOST, BROKER_PORT);
     s_mqtt.setCallback(onMessage);
     s_mqtt.setKeepAlive(30);
-    s_mqtt.setBufferSize(256);
+    // Heart payloads are ~16 B, but event payloads (Phase 2) are 200-700 B
+    // with HTML-stripped LLM descriptions. PubSubClient silently drops any
+    // message that doesn't fit, so we size for the worst case.
+    s_mqtt.setBufferSize(1024);
     // Hard-cap every blocking MQTT operation (connect / read / write) at 3s.
     // Default is 15s on PubSubClient + ESP32 — when broker.emqx.io is slow we
     // saw the main loop stall for 10+ seconds at a time, mech-face second
