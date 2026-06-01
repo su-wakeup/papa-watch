@@ -57,7 +57,7 @@ static void buildEventCard(lv_obj_t* parent, const events_store::Event& e) {
         static const char* DAYS[] = {"Sun","Mon","Tue","Wed","Thu","Fri","Sat"};
         static const char* MONS[] = {"Jan","Feb","Mar","Apr","May","Jun",
                                      "Jul","Aug","Sep","Oct","Nov","Dec"};
-        snprintf(date_line, sizeof(date_line), "%s · %s %d",
+        snprintf(date_line, sizeof(date_line), "%s, %s %d",
                  DAYS[tm.tm_wday & 7], MONS[tm.tm_mon & 15], tm.tm_mday);
         int h12 = tm.tm_hour % 12; if (h12 == 0) h12 = 12;
         snprintf(time_line, sizeof(time_line), "%d:%02d %s",
@@ -83,11 +83,11 @@ static void buildEventCard(lv_obj_t* parent, const events_store::Event& e) {
     // Time + location.
     char meta[80];
     if (time_line[0] && e.location[0]) {
-        snprintf(meta, sizeof(meta), "%s · %s", time_line, e.location);
+        snprintf(meta, sizeof(meta), "%s  @  %s", time_line, e.location);
     } else if (time_line[0]) {
         snprintf(meta, sizeof(meta), "%s", time_line);
     } else if (e.location[0]) {
-        snprintf(meta, sizeof(meta), "%s", e.location);
+        snprintf(meta, sizeof(meta), "@ %s", e.location);
     } else {
         meta[0] = '\0';
     }
@@ -101,10 +101,11 @@ static void buildEventCard(lv_obj_t* parent, const events_store::Event& e) {
         lv_obj_align(meta_lbl, LV_ALIGN_TOP_LEFT, 4, 48);
     }
 
-    // Source attribution (—em-dash + name).
+    // Source attribution. (em-dash isn't in the current font subset → tofu;
+    // use ASCII "from" prefix instead, plus an italic-feeling lowercase tone.)
     if (e.source[0]) {
         char src_buf[40];
-        snprintf(src_buf, sizeof(src_buf), "— %s", e.source);
+        snprintf(src_buf, sizeof(src_buf), "from %s", e.source);
         lv_obj_t* src_lbl = lv_label_create(card);
         lv_obj_set_style_text_font(src_lbl, &mont_light_14, 0);
         lv_obj_set_style_text_color(src_lbl, lv_color_hex(COL_DIM), 0);
