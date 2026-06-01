@@ -423,7 +423,7 @@ async function extractEvents(env, raw_email_id) {
         const events = Array.isArray(result.events) ? result.events : [];
 
         for (const ev of events) {
-            await env.EVENTS_DB.prepare(
+            const ins = await env.EVENTS_DB.prepare(
                 `INSERT INTO events
                     (raw_email_id, title, kind, starts_at, ends_at,
                      location, description, confidence)
@@ -438,6 +438,10 @@ async function extractEvents(env, raw_email_id) {
                 ev.description || null,
                 ev.confidence ?? null,
             ).run();
+            const event_id = ins.meta.last_row_id;
+            // Inline fan-out. Errors don't fail extraction — cron sweep retries.
+            try { await pushEventToTelegram(env, event_id); }
+            catch (e) { console.error(`[push] event=${event_id} threw:`, e.message); }
         }
 
         // Placeholder so the admin view shows "looked at, found nothing".
@@ -469,6 +473,111 @@ async function extractAllUnprocessed(env, limit = 25) {
     const out = [];
     for (const r of results) {
         try { out.push(await extractEvents(env, r.id)); }
+        catch (e) { out.push({ id: r.id, ok: false, error: e.message }); }
+    }
+    return out;
+}
+
+// ─── Family-events Telegram fan-out (Phase 3) ──────────────────────────────
+// For each event we INSERTed, look up subscriptions for its source and send
+// one Telegram message per (source, telegram-chat) row. Triggered both
+// inline from the extractor and from the cron sweep (catch-up).
+
+function formatEventForTelegram(event) {
+    const lines = [`📅 ${event.title}`];
+    const meta = [];
+    if (event.starts_at) {
+        const d = new Date(event.starts_at * 1000);
+        const datePart = d.toLocaleString("en-US", {
+            timeZone: "America/Los_Angeles",
+            weekday: "short", month: "short", day: "numeric",
+            hour: "numeric", minute: "2-digit", hour12: true,
+        });
+        meta.push(`${datePart} PT`);
+    }
+    if (event.location) meta.push(event.location);
+    if (meta.length) lines.push(`   ${meta.join(" · ")}`);
+    if (event.source_name) lines.push(`   — ${event.source_name}`);
+    if (event.description && event.description !== event.title) {
+        lines.push("");
+        lines.push(event.description);
+    }
+    return lines.join("\n");
+}
+
+async function pushEventToTelegram(env, event_id) {
+    if (!env.TELEGRAM_BOT_TOKEN) {
+        return { ok: false, error: "TELEGRAM_BOT_TOKEN not set" };
+    }
+
+    // Atomic claim — mirrors the extract pattern.
+    const claim = await env.EVENTS_DB.prepare(
+        `UPDATE events SET pushed_telegram = 1
+            WHERE id = ? AND pushed_telegram = 0`
+    ).bind(event_id).run();
+    if (claim.meta.changes === 0) {
+        return { ok: true, id: event_id, skipped: "already pushed" };
+    }
+
+    try {
+        const event = await env.EVENTS_DB.prepare(
+            `SELECT e.*, r.source_id, s.name AS source_name
+                FROM events e
+                LEFT JOIN raw_emails r ON e.raw_email_id = r.id
+                LEFT JOIN sources    s ON r.source_id    = s.id
+                WHERE e.id = ?`
+        ).bind(event_id).first();
+        if (!event) throw new Error("event not found");
+
+        // Placeholder rows ('(no event)' / kind='none') exist so the admin
+        // dashboard knows the email was scanned; we don't broadcast them.
+        if (event.kind === "none") {
+            return { ok: true, id: event_id, skipped: "placeholder" };
+        }
+
+        const { results: subs } = await env.EVENTS_DB.prepare(
+            `SELECT channel_id FROM subscriptions
+                WHERE source_id    = ?
+                  AND channel_kind = 'telegram'
+                  AND enabled      = 1`
+        ).bind(event.source_id).all();
+
+        if (subs.length === 0) {
+            // Nothing to send; keep pushed_telegram=1 so we don't keep
+            // rechecking. Subscriptions added later only affect new events.
+            return { ok: true, id: event_id, sent: 0, note: "no subscribers" };
+        }
+
+        const text = formatEventForTelegram(event);
+        let sent = 0;
+        for (const sub of subs) {
+            const resp = await telegramSend(env.TELEGRAM_BOT_TOKEN,
+                                            sub.channel_id, text);
+            if (resp.ok) sent++;
+            else console.warn(`[push] tg ${resp.status} for chat ${sub.channel_id}`);
+        }
+        console.log(`[push] event=${event_id} sent=${sent}/${subs.length}`);
+        return { ok: true, id: event_id, sent, of: subs.length };
+    } catch (e) {
+        // Release claim so cron retries.
+        await env.EVENTS_DB.prepare(
+            `UPDATE events SET pushed_telegram = 0 WHERE id = ?`
+        ).bind(event_id).run();
+        throw e;
+    }
+}
+
+async function pushAllUnsynced(env, limit = 50) {
+    const { results } = await env.EVENTS_DB.prepare(
+        `SELECT id FROM events
+            WHERE pushed_telegram = 0
+              AND kind != 'none'
+            ORDER BY id ASC LIMIT ?`
+    ).bind(limit).all();
+
+    const out = [];
+    for (const r of results) {
+        try { out.push(await pushEventToTelegram(env, r.id)); }
         catch (e) { out.push({ id: r.id, ok: false, error: e.message }); }
     }
     return out;
@@ -661,6 +770,17 @@ export default {
                 { headers: { "content-type": "application/json" } });
         }
 
+        // Manual Telegram fan-out sweep — pushes all events with
+        // pushed_telegram=0. Useful after seeding a new subscription or
+        // recovering from a Telegram outage.
+        if (request.method === "GET" &&
+            url.pathname === `/push/${env.INGEST_TOKEN}/run`) {
+            const limit = parseInt(url.searchParams.get("limit") || "50", 10);
+            const results = await pushAllUnsynced(env, limit);
+            return new Response(JSON.stringify({ ok: true, results }, null, 2),
+                { headers: { "content-type": "application/json" } });
+        }
+
         // Telegram webhook. Path includes the WEBHOOK_SECRET so unauthenticated
         // posters can't trigger it. Telegram also echoes a header for additional
         // verification (set via setWebhook's secret_token field).
@@ -689,6 +809,10 @@ export default {
         if (env.GEMINI_API_KEY && env.EVENTS_DB) {
             ctx.waitUntil(extractAllUnprocessed(env).catch((e) =>
                 console.error("[cron] extract sweep failed:", e.message)));
+        }
+        if (env.TELEGRAM_BOT_TOKEN && env.EVENTS_DB) {
+            ctx.waitUntil(pushAllUnsynced(env).catch((e) =>
+                console.error("[cron] push sweep failed:", e.message)));
         }
     },
 };
