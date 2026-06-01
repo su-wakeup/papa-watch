@@ -55,11 +55,16 @@ function makeConnect(clientId) {
     return concatBytes(new Uint8Array([0x10]), encodeRemainingLength(body.length), body);
 }
 
-function makePublish(topic, payload) {
+function makePublish(topic, payload, retain = false) {
     const topicEnc = encodeUtf8Prefixed(topic);
     const payloadBytes = typeof payload === "string" ? new TextEncoder().encode(payload) : payload;
     const body = concatBytes(topicEnc, payloadBytes);
-    return concatBytes(new Uint8Array([0x30]), encodeRemainingLength(body.length), body);
+    // 0x30 = PUBLISH (QoS 0, no retain); 0x31 sets the RETAIN bit so the
+    // broker remembers the last payload per topic and replays it to new
+    // subscribers — critical for the watch which may be offline at publish.
+    const firstByte = retain ? 0x31 : 0x30;
+    return concatBytes(new Uint8Array([firstByte]),
+                       encodeRemainingLength(body.length), body);
 }
 
 function makeSubscribe(packetId, topic) {
@@ -97,7 +102,7 @@ function parsePublishPacket(buf) {
 const DISCONNECT_PACKET = new Uint8Array([0xe0, 0x00]);
 const PINGREQ_PACKET    = new Uint8Array([0xc0, 0x00]);
 
-async function publishMqtt(brokerWss, topic, payload) {
+async function publishMqtt(brokerWss, topic, payload, options = {}) {
     // Cloudflare-style outbound WebSocket: fetch with Upgrade headers.
     const response = await fetch(brokerWss.replace(/^wss:/, "https:"), {
         headers: {
@@ -118,7 +123,7 @@ async function publishMqtt(brokerWss, topic, payload) {
         const onPacket = (data) => {
             if (data[0] === 0x20 /* CONNACK */) {
                 clearTimeout(timeout);
-                ws.send(makePublish(topic, payload));
+                ws.send(makePublish(topic, payload, options.retain === true));
                 setTimeout(() => {
                     try { ws.send(DISCONNECT_PACKET); ws.close(); } catch (_) {}
                     resolve();
@@ -441,7 +446,9 @@ async function extractEvents(env, raw_email_id) {
             const event_id = ins.meta.last_row_id;
             // Inline fan-out. Errors don't fail extraction — cron sweep retries.
             try { await pushEventToTelegram(env, event_id); }
-            catch (e) { console.error(`[push] event=${event_id} threw:`, e.message); }
+            catch (e) { console.error(`[push-tg] event=${event_id} threw:`, e.message); }
+            try { await pushEventToMqtt(env, event_id); }
+            catch (e) { console.error(`[push-mqtt] event=${event_id} threw:`, e.message); }
         }
 
         // Placeholder so the admin view shows "looked at, found nothing".
@@ -581,6 +588,360 @@ async function pushAllUnsynced(env, limit = 50) {
         catch (e) { out.push({ id: r.id, ok: false, error: e.message }); }
     }
     return out;
+}
+
+// ─── Family-events MQTT fan-out (Phase 5, bot side) ────────────────────────
+// Publishes one retained MQTT message per event so the watch's future
+// Schedule app (task #44 firmware-side) can subscribe with a wildcard and
+// pick up the full backlog the moment it connects. Topic shape:
+//   events/<pair_id>/<event_id>
+// `pair_id` comes from the subscription row's channel_id, so the same
+// event can fan out to multiple watches by adding more rows.
+
+function buildMqttEventPayload(event) {
+    return JSON.stringify({
+        id:          event.id,
+        title:       event.title,
+        kind:        event.kind,
+        starts_at:   event.starts_at,    // epoch seconds, may be null
+        ends_at:     event.ends_at,
+        location:    event.location,
+        description: event.description,
+        source:      event.source_name,
+        confidence:  event.confidence,
+    });
+}
+
+async function pushEventToMqtt(env, event_id) {
+    if (!env.MQTT_BROKER_WSS) {
+        return { ok: false, error: "MQTT_BROKER_WSS not set" };
+    }
+
+    const claim = await env.EVENTS_DB.prepare(
+        `UPDATE events SET pushed_mqtt = 1 WHERE id = ? AND pushed_mqtt = 0`
+    ).bind(event_id).run();
+    if (claim.meta.changes === 0) {
+        return { ok: true, id: event_id, skipped: "already pushed" };
+    }
+
+    try {
+        const event = await env.EVENTS_DB.prepare(
+            `SELECT e.*, r.source_id, s.name AS source_name
+                FROM events e
+                LEFT JOIN raw_emails r ON e.raw_email_id = r.id
+                LEFT JOIN sources    s ON r.source_id    = s.id
+                WHERE e.id = ?`
+        ).bind(event_id).first();
+        if (!event) throw new Error("event not found");
+        if (event.kind === "none") {
+            return { ok: true, id: event_id, skipped: "placeholder" };
+        }
+
+        const { results: subs } = await env.EVENTS_DB.prepare(
+            `SELECT channel_id FROM subscriptions
+                WHERE source_id    = ?
+                  AND channel_kind = 'mqtt'
+                  AND enabled      = 1`
+        ).bind(event.source_id).all();
+
+        if (subs.length === 0) {
+            return { ok: true, id: event_id, sent: 0, note: "no subscribers" };
+        }
+
+        const payload = buildMqttEventPayload(event);
+        let sent = 0;
+        for (const sub of subs) {
+            const topic = `events/${sub.channel_id}/${event_id}`;
+            try {
+                await publishMqtt(env.MQTT_BROKER_WSS, topic, payload,
+                                  { retain: true });
+                sent++;
+            } catch (e) {
+                console.error(`[mqtt-push] event=${event_id} topic=${topic} failed:`,
+                              e.message);
+            }
+        }
+        console.log(`[mqtt-push] event=${event_id} sent=${sent}/${subs.length}`);
+        return { ok: true, id: event_id, sent, of: subs.length };
+    } catch (e) {
+        await env.EVENTS_DB.prepare(
+            `UPDATE events SET pushed_mqtt = 0 WHERE id = ?`
+        ).bind(event_id).run();
+        throw e;
+    }
+}
+
+async function pushAllUnsyncedMqtt(env, limit = 50) {
+    const { results } = await env.EVENTS_DB.prepare(
+        `SELECT id FROM events
+            WHERE pushed_mqtt = 0
+              AND kind != 'none'
+            ORDER BY id ASC LIMIT ?`
+    ).bind(limit).all();
+    const out = [];
+    for (const r of results) {
+        try { out.push(await pushEventToMqtt(env, r.id)); }
+        catch (e) { out.push({ id: r.id, ok: false, error: e.message }); }
+    }
+    return out;
+}
+
+// ─── Family-events .ics export (Phase 6) ───────────────────────────────────
+// Serves RFC 5545 calendar feeds so Apple Calendar / Google Calendar can
+// subscribe to the URL and refresh automatically. One feed for everything
+// (/ics/<token>/all.ics) plus per-source feeds (/ics/<token>/<source>.ics)
+// so the user can selectively share Lakeside-only with the kid's grandparents
+// etc.
+
+// Escape per RFC 5545 §3.3.11 (TEXT property value): backslash, comma,
+// semicolon, newline. Order matters — backslash first.
+function icsEscape(s) {
+    return String(s)
+        .replace(/\\/g, "\\\\")
+        .replace(/\n/g, "\\n")
+        .replace(/,/g,  "\\,")
+        .replace(/;/g,  "\\;");
+}
+
+// epoch → "20260608T010000Z" (UTC, basic format per ICS).
+function icsUtcStamp(epoch) {
+    const d = new Date(epoch * 1000);
+    const p = (n) => String(n).padStart(2, "0");
+    return `${d.getUTCFullYear()}${p(d.getUTCMonth() + 1)}${p(d.getUTCDate())}`
+         + `T${p(d.getUTCHours())}${p(d.getUTCMinutes())}${p(d.getUTCSeconds())}Z`;
+}
+
+// Build VCALENDAR text from a list of event rows (joined with source name).
+function eventsToIcs(events, calendarName = "Papa Watch — Family Events") {
+    const now = icsUtcStamp(Math.floor(Date.now() / 1000));
+    const lines = [
+        "BEGIN:VCALENDAR",
+        "VERSION:2.0",
+        "PRODID:-//papa-watch//family-events//EN",
+        "CALSCALE:GREGORIAN",
+        "METHOD:PUBLISH",
+        `X-WR-CALNAME:${icsEscape(calendarName)}`,
+    ];
+
+    for (const e of events) {
+        // ICS requires DTSTART; events without a time we skip rather than
+        // emit malformed entries.
+        if (!e.starts_at) continue;
+        lines.push("BEGIN:VEVENT");
+        lines.push(`UID:papa-event-${e.id}@papa-watch-bot`);
+        lines.push(`DTSTAMP:${now}`);
+        lines.push(`DTSTART:${icsUtcStamp(e.starts_at)}`);
+        if (e.ends_at) lines.push(`DTEND:${icsUtcStamp(e.ends_at)}`);
+        const title = e.source_name ? `[${e.source_name}] ${e.title}` : e.title;
+        lines.push(`SUMMARY:${icsEscape(title)}`);
+        if (e.location) lines.push(`LOCATION:${icsEscape(e.location)}`);
+        if (e.description) lines.push(`DESCRIPTION:${icsEscape(e.description)}`);
+        lines.push("END:VEVENT");
+    }
+
+    lines.push("END:VCALENDAR");
+    // RFC 5545 mandates CRLF line endings.
+    return lines.join("\r\n") + "\r\n";
+}
+
+// ─── Family-events admin web UI (Phase 7) ──────────────────────────────────
+// One read-only page at /admin/<INGEST_TOKEN>/ that shows the current state
+// of raw_emails / events / subscriptions, plus a "view body" link that
+// streams an R2 object back as text. Editing UI (toggle subscription
+// enabled, re-extract a row) can come later when there's a need.
+
+function htmlEscape(s) {
+    return String(s ?? "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+}
+
+function fmtEpoch(epoch, tz) {
+    if (!epoch) return "—";
+    return new Date(epoch * 1000).toLocaleString("en-US", {
+        timeZone: tz,
+        month: "short", day: "numeric", year: "numeric",
+        hour: "2-digit", minute: "2-digit", hour12: false,
+    });
+}
+
+function fmtBool(v, trueLabel = "yes", falseLabel = "no") {
+    return v ? `<span class="ok">${trueLabel}</span>`
+             : `<span class="muted">${falseLabel}</span>`;
+}
+
+async function renderAdminPage(env, token) {
+    const tz = "America/Los_Angeles";   // PAPA spends most days in CN but the
+                                        // emails are PT-local; show in PT.
+
+    const [stats, sources, rawEmails, events, subs] = await Promise.all([
+        env.EVENTS_DB.prepare(`
+            SELECT
+                (SELECT COUNT(*) FROM raw_emails)    AS raw_emails,
+                (SELECT COUNT(*) FROM events
+                    WHERE kind != 'none')            AS events,
+                (SELECT COUNT(*) FROM subscriptions
+                    WHERE enabled = 1)               AS subscriptions,
+                (SELECT COUNT(*) FROM sources)       AS sources
+        `).first(),
+        env.EVENTS_DB.prepare(
+            `SELECT id, name, kind, email_match FROM sources ORDER BY id`
+        ).all(),
+        env.EVENTS_DB.prepare(
+            `SELECT id, source_id, from_address, subject, received_at,
+                    bytes, processed
+                FROM raw_emails ORDER BY id DESC LIMIT 25`
+        ).all(),
+        env.EVENTS_DB.prepare(
+            `SELECT e.id, e.raw_email_id, e.title, e.kind,
+                    e.starts_at, e.location, ROUND(e.confidence,2) AS conf,
+                    e.pushed_telegram, e.pushed_mqtt,
+                    s.name AS source_name
+                FROM events e
+                LEFT JOIN raw_emails r ON e.raw_email_id = r.id
+                LEFT JOIN sources    s ON r.source_id    = s.id
+                ORDER BY e.id DESC LIMIT 50`
+        ).all(),
+        env.EVENTS_DB.prepare(
+            `SELECT sub.id, sub.source_id, src.name AS source_name,
+                    sub.channel_kind, sub.channel_id, sub.enabled
+                FROM subscriptions sub
+                LEFT JOIN sources src ON sub.source_id = src.id
+                ORDER BY sub.id`
+        ).all(),
+    ]);
+
+    const rawTable = rawEmails.results.map((r) => `
+        <tr>
+          <td>${r.id}</td>
+          <td><code>${htmlEscape(r.from_address)}</code></td>
+          <td>${htmlEscape(r.subject ?? "(no subject)")}</td>
+          <td class="mono">${fmtEpoch(r.received_at, tz)}</td>
+          <td class="mono">${r.bytes ?? "—"}</td>
+          <td>${fmtBool(r.processed, "✓", "·")}</td>
+          <td><a href="/admin/${token}/raw/${r.id}">view</a></td>
+        </tr>`).join("");
+
+    const eventsTable = events.results.map((e) => `
+        <tr>
+          <td>${e.id}</td>
+          <td>${htmlEscape(e.source_name ?? "—")}</td>
+          <td>${htmlEscape(e.title)}</td>
+          <td class="mono">${htmlEscape(e.kind ?? "—")}</td>
+          <td class="mono">${fmtEpoch(e.starts_at, tz)}</td>
+          <td>${htmlEscape(e.location ?? "—")}</td>
+          <td class="mono">${e.conf ?? "—"}</td>
+          <td>${fmtBool(e.pushed_telegram, "tg", "—")}
+              ${fmtBool(e.pushed_mqtt, "mqtt", "—")}</td>
+        </tr>`).join("");
+
+    const subsTable = subs.results.map((s) => `
+        <tr>
+          <td>${s.id}</td>
+          <td>${htmlEscape(s.source_name ?? "—")}</td>
+          <td class="mono">${htmlEscape(s.channel_kind)}</td>
+          <td class="mono">${htmlEscape(s.channel_id)}</td>
+          <td>${fmtBool(s.enabled, "on", "off")}</td>
+        </tr>`).join("");
+
+    const sourcesTable = sources.results.map((s) => `
+        <tr>
+          <td>${s.id}</td>
+          <td>${htmlEscape(s.name)}</td>
+          <td class="mono">${htmlEscape(s.kind)}</td>
+          <td class="mono">${htmlEscape(s.email_match ?? "—")}</td>
+        </tr>`).join("");
+
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>papa-watch · family events</title>
+<style>
+  :root { --ink:#1a1a1a; --muted:#888; --line:#eee; --bg:#fdfdfa; --ok:#1f8a4c; }
+  body { font:14px/1.5 -apple-system,BlinkMacSystemFont,sans-serif;
+         max-width:1180px; margin:24px auto; padding:0 20px;
+         color:var(--ink); background:var(--bg); }
+  h1 { font-size:22px; margin:0 0 4px; }
+  h1 small { font-weight:400; color:var(--muted); font-size:13px; }
+  h2 { font-size:14px; text-transform:uppercase; letter-spacing:0.08em;
+       color:var(--muted); margin:32px 0 8px;
+       border-bottom:1px solid var(--line); padding-bottom:4px; }
+  .stats { margin:12px 0 4px; }
+  .stat { display:inline-block; margin-right:32px; }
+  .stat b { font-size:22px; display:block; }
+  table { border-collapse:collapse; width:100%; margin:6px 0 4px; }
+  th,td { border-bottom:1px solid var(--line); padding:6px 10px;
+          text-align:left; vertical-align:top; font-size:13px; }
+  th { color:var(--muted); font-weight:500; font-size:11px;
+       text-transform:uppercase; letter-spacing:0.06em; }
+  tr:hover td { background:#fff5e6; }
+  code,.mono { font:12px/1.4 ui-monospace,"SF Mono",monospace; color:#444; }
+  .ok { color:var(--ok); font-weight:600; }
+  .muted { color:var(--muted); }
+  a { color:#1064c2; text-decoration:none; }
+  a:hover { text-decoration:underline; }
+</style>
+</head>
+<body>
+<h1>papa-watch · family events <small>admin</small></h1>
+
+<div class="stats">
+  <span class="stat"><b>${stats?.raw_emails ?? 0}</b>raw emails</span>
+  <span class="stat"><b>${stats?.events ?? 0}</b>events</span>
+  <span class="stat"><b>${stats?.subscriptions ?? 0}</b>subscriptions</span>
+  <span class="stat"><b>${stats?.sources ?? 0}</b>sources</span>
+</div>
+
+<h2>Sources</h2>
+<table><thead><tr><th>id</th><th>name</th><th>kind</th><th>email match</th></tr></thead>
+<tbody>${sourcesTable || `<tr><td colspan="4" class="muted">none</td></tr>`}</tbody></table>
+
+<h2>Subscriptions</h2>
+<table><thead><tr><th>id</th><th>source</th><th>channel</th><th>id</th><th>enabled</th></tr></thead>
+<tbody>${subsTable || `<tr><td colspan="5" class="muted">none</td></tr>`}</tbody></table>
+
+<h2>Events (latest 50)</h2>
+<table><thead><tr><th>id</th><th>source</th><th>title</th><th>kind</th><th>starts (PT)</th><th>location</th><th>conf</th><th>pushed</th></tr></thead>
+<tbody>${eventsTable || `<tr><td colspan="8" class="muted">none</td></tr>`}</tbody></table>
+
+<h2>Recent raw emails (latest 25)</h2>
+<table><thead><tr><th>id</th><th>from</th><th>subject</th><th>received (PT)</th><th>bytes</th><th>extracted</th><th>body</th></tr></thead>
+<tbody>${rawTable || `<tr><td colspan="7" class="muted">none</td></tr>`}</tbody></table>
+
+</body></html>`;
+}
+
+// `which` is either "all" or a source id (numeric string).
+async function buildIcsFeed(env, which) {
+    let rows;
+    if (which === "all") {
+        rows = await env.EVENTS_DB.prepare(
+            `SELECT e.id, e.title, e.starts_at, e.ends_at, e.location,
+                    e.description, s.name AS source_name
+                FROM events e
+                LEFT JOIN raw_emails r ON e.raw_email_id = r.id
+                LEFT JOIN sources    s ON r.source_id    = s.id
+                WHERE e.kind != 'none'
+                ORDER BY e.starts_at ASC`
+        ).all();
+    } else {
+        const sid = parseInt(which, 10);
+        if (!Number.isFinite(sid)) return null;
+        rows = await env.EVENTS_DB.prepare(
+            `SELECT e.id, e.title, e.starts_at, e.ends_at, e.location,
+                    e.description, s.name AS source_name
+                FROM events e
+                LEFT JOIN raw_emails r ON e.raw_email_id = r.id
+                LEFT JOIN sources    s ON r.source_id    = s.id
+                WHERE r.source_id = ? AND e.kind != 'none'
+                ORDER BY e.starts_at ASC`
+        ).bind(sid).all();
+    }
+    return eventsToIcs(rows.results || []);
 }
 
 // ─── Durable Object: HeartRelay ────────────────────────────────────────────
@@ -780,6 +1141,63 @@ export default {
             return new Response(JSON.stringify({ ok: true, results }, null, 2),
                 { headers: { "content-type": "application/json" } });
         }
+        if (request.method === "GET" &&
+            url.pathname === `/push-mqtt/${env.INGEST_TOKEN}/run`) {
+            const limit = parseInt(url.searchParams.get("limit") || "50", 10);
+            const results = await pushAllUnsyncedMqtt(env, limit);
+            return new Response(JSON.stringify({ ok: true, results }, null, 2),
+                { headers: { "content-type": "application/json" } });
+        }
+
+        // Admin web UI — read-only overview of raw_emails / events /
+        // subscriptions. Token-gated path so accidental URL leaks aren't
+        // catastrophic. Edit actions can come later.
+        if (request.method === "GET" &&
+            url.pathname === `/admin/${env.INGEST_TOKEN}/`) {
+            const html = await renderAdminPage(env, env.INGEST_TOKEN);
+            return new Response(html, {
+                headers: { "content-type": "text/html; charset=utf-8" },
+            });
+        }
+        // Companion endpoint: stream a raw email body from R2.
+        {
+            const m = url.pathname.match(
+                /^\/admin\/([^\/]+)\/raw\/(\d+)$/);
+            if (request.method === "GET" && m && m[1] === env.INGEST_TOKEN) {
+                const row = await env.EVENTS_DB.prepare(
+                    `SELECT r2_key, from_address, subject FROM raw_emails WHERE id = ?`
+                ).bind(parseInt(m[2], 10)).first();
+                if (!row) return new Response("not found", { status: 404 });
+                const obj = await env.EMAILS_R2.get(row.r2_key);
+                if (!obj) return new Response("R2 miss", { status: 404 });
+                const header = `FROM: ${row.from_address}\n`
+                             + `SUBJECT: ${row.subject ?? "(none)"}\n`
+                             + `KEY: ${row.r2_key}\n\n`;
+                const body = header + (await obj.text());
+                return new Response(body, {
+                    headers: { "content-type": "text/plain; charset=utf-8" },
+                });
+            }
+        }
+
+        // .ics calendar feed for Apple/Google Calendar URL subscription.
+        //   /ics/<INGEST_TOKEN>/all.ics      — every source
+        //   /ics/<INGEST_TOKEN>/<sourceId>.ics — one source (e.g. 1.ics = Lakeside)
+        // Calendar apps poll on their own cadence (15-30 min typically).
+        {
+            const m = url.pathname.match(
+                /^\/ics\/([^\/]+)\/([^\/]+)\.ics$/);
+            if (request.method === "GET" && m && m[1] === env.INGEST_TOKEN) {
+                const body = await buildIcsFeed(env, m[2]);
+                if (body === null) return new Response("bad source", { status: 400 });
+                return new Response(body, {
+                    headers: {
+                        "content-type": "text/calendar; charset=utf-8",
+                        "cache-control": "public, max-age=300",
+                    },
+                });
+            }
+        }
 
         // Telegram webhook. Path includes the WEBHOOK_SECRET so unauthenticated
         // posters can't trigger it. Telegram also echoes a header for additional
@@ -812,7 +1230,11 @@ export default {
         }
         if (env.TELEGRAM_BOT_TOKEN && env.EVENTS_DB) {
             ctx.waitUntil(pushAllUnsynced(env).catch((e) =>
-                console.error("[cron] push sweep failed:", e.message)));
+                console.error("[cron] tg push sweep failed:", e.message)));
+        }
+        if (env.MQTT_BROKER_WSS && env.EVENTS_DB) {
+            ctx.waitUntil(pushAllUnsyncedMqtt(env).catch((e) =>
+                console.error("[cron] mqtt push sweep failed:", e.message)));
         }
     },
 };
