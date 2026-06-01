@@ -32,9 +32,15 @@ static lv_obj_t* s_empty       = nullptr;       // empty-state group
 static uint32_t  s_last_render_signature = 0;
 
 // Wire one event into a card-shaped lv_obj. Caller appends it to s_list.
+// Card width is absolute (not lv_pct) because the flex column's cross-axis
+// alignment was collapsing percentage-sized children down to content width,
+// leaving cards as a narrow left-side strip with the right 75% of screen
+// empty (v0.9.8 photo on hardware).
+static constexpr int CARD_WIDTH = 400;
+
 static void buildEventCard(lv_obj_t* parent, const events_store::Event& e) {
     lv_obj_t* card = lv_obj_create(parent);
-    lv_obj_set_width(card, lv_pct(96));
+    lv_obj_set_width(card, CARD_WIDTH);
     lv_obj_set_height(card, LV_SIZE_CONTENT);
     lv_obj_set_style_bg_color(card, lv_color_hex(COL_BG), 0);
     lv_obj_set_style_bg_opa(card, LV_OPA_TRANSP, 0);
@@ -76,7 +82,7 @@ static void buildEventCard(lv_obj_t* parent, const events_store::Event& e) {
     lv_obj_set_style_text_font(title_lbl, &mont_light_20, 0);
     lv_obj_set_style_text_color(title_lbl, lv_color_hex(COL_INK), 0);
     lv_label_set_long_mode(title_lbl, LV_LABEL_LONG_DOT);
-    lv_obj_set_width(title_lbl, lv_pct(94));
+    lv_obj_set_width(title_lbl, CARD_WIDTH - 16);
     lv_label_set_text(title_lbl, e.title[0] ? e.title : "(untitled)");
     lv_obj_align(title_lbl, LV_ALIGN_TOP_LEFT, 4, 22);
 
@@ -96,7 +102,7 @@ static void buildEventCard(lv_obj_t* parent, const events_store::Event& e) {
         lv_obj_set_style_text_font(meta_lbl, &mont_light_14, 0);
         lv_obj_set_style_text_color(meta_lbl, lv_color_hex(COL_DIM), 0);
         lv_label_set_long_mode(meta_lbl, LV_LABEL_LONG_DOT);
-        lv_obj_set_width(meta_lbl, lv_pct(94));
+        lv_obj_set_width(meta_lbl, CARD_WIDTH - 16);
         lv_label_set_text(meta_lbl, meta);
         lv_obj_align(meta_lbl, LV_ALIGN_TOP_LEFT, 4, 48);
     }
@@ -110,7 +116,7 @@ static void buildEventCard(lv_obj_t* parent, const events_store::Event& e) {
         lv_obj_set_style_text_font(src_lbl, &mont_light_14, 0);
         lv_obj_set_style_text_color(src_lbl, lv_color_hex(COL_DIM), 0);
         lv_label_set_long_mode(src_lbl, LV_LABEL_LONG_DOT);
-        lv_obj_set_width(src_lbl, lv_pct(94));
+        lv_obj_set_width(src_lbl, CARD_WIDTH - 16);
         lv_label_set_text(src_lbl, src_buf);
         lv_obj_align(src_lbl, LV_ALIGN_TOP_LEFT, 4, meta[0] ? 66 : 48);
     }
@@ -208,8 +214,11 @@ void enter(lv_obj_t* parent) {
     lv_obj_set_size(s_list, 410, 340);
     lv_obj_align(s_list, LV_ALIGN_TOP_MID, 0, 86);
     lv_obj_set_flex_flow(s_list, LV_FLEX_FLOW_COLUMN);
+    // Track-align = START (stack from top), cross-axis = CENTER (each card
+    // centered horizontally in the list since cards have explicit
+    // CARD_WIDTH and the list is wider), item-track = START.
     lv_obj_set_flex_align(s_list, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER,
-                          LV_FLEX_ALIGN_CENTER);
+                          LV_FLEX_ALIGN_START);
     lv_obj_add_flag(s_list, LV_OBJ_FLAG_SCROLLABLE);
 
     s_last_render_signature = 0;
