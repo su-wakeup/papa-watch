@@ -2,6 +2,7 @@
 #include <Arduino.h>
 #include <ArduinoJson.h>
 #include <Preferences.h>
+#include <stdlib.h>
 #include <string.h>
 #include <time.h>
 
@@ -91,6 +92,26 @@ static void copyTruncated(char* dst, size_t cap, const char* src) {
 }
 
 void onMqttEvent(const char* topic, const uint8_t* payload, unsigned len) {
+    // Empty payload on a retained event topic = tombstone: events/<pair>/<id>
+    // was cleared (worker delete or manual), so drop that id locally too. The
+    // id isn't in the absent body — recover it from the topic's last segment.
+    if (len == 0) {
+        const char* slash = strrchr(topic, '/');
+        uint32_t id = slash ? (uint32_t)strtoul(slash + 1, nullptr, 10) : 0;
+        if (!id) return;
+        for (int i = 0; i < MAX_EVENTS; i++) {
+            if (s_events[i].id == id) {
+                memset(&s_events[i], 0, sizeof(Event));
+                sortByStartsAsc();
+                save();
+                s_last_update_ms = millis();
+                Serial.printf("[events] -id=%u (tombstone, total %d)\n", id, s_count);
+                return;
+            }
+        }
+        return;
+    }
+
     JsonDocument doc;
     DeserializationError err = deserializeJson(doc, payload, len);
     if (err) {
