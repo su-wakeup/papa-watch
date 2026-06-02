@@ -11,9 +11,9 @@ from PIL import Image, ImageFont, ImageDraw
 import os
 
 TTF   = "assets/fonts/phosphor/Phosphor.ttf"
-OUT   = "assets/icons"
-CANVAS = 128
-FIT    = 104          # glyph fits within this, centered, leaving ~12px margin
+OUT   = "assets/icons/mono"   # the "simple" skin; colour pack lives in assets/icons
+CANVAS = 224          # match the colour set so both skins share the layout
+FIT    = 188          # a touch smaller than the colour subjects — glyphs are bold
 
 # name -> Phosphor regular codepoint (mirrors src/app_registry.cpp icon_utf8)
 ICONS = {

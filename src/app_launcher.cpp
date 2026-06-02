@@ -22,6 +22,7 @@
 #include "app.h"
 #include "status_bar.h"
 #include <lvgl.h>
+#include <Preferences.h>
 #include <stdint.h>
 
 LV_FONT_DECLARE(mont_light_14);
@@ -48,7 +49,20 @@ static constexpr int      ANIM_MS       = 240;
 static constexpr int32_t  SCALE_SIDE    = 73;
 static constexpr int32_t  SCALE_CENTER  = 256;
 static constexpr lv_opa_t OPA_CENTER    = 255;   // center pops, sides recede —
-static constexpr lv_opa_t OPA_SIDE      = 150;   // colour icons dim by opacity
+static constexpr lv_opa_t OPA_SIDE      = 150;   // icons dim by opacity
+static constexpr uint32_t COL_AMBER     = 0xE6A050;   // simple-skin recolour tint
+
+// Skin: false = rich colour pack (no recolour), true = simple mono glyphs
+// recoloured amber. Read from NVS on enter().
+static bool s_recolor = false;
+
+static bool load_skin_rich() {
+    Preferences p;
+    p.begin("papa-watch", true);
+    bool rich = p.getBool("skin_rich", true);   // default to the colour pack
+    p.end();
+    return rich;
+}
 static constexpr int      POS_LEFT_X    = -160;
 static constexpr int      POS_CENTER_X  = 0;
 static constexpr int      POS_RIGHT_X   = 160;
@@ -66,7 +80,7 @@ static const App* app_at_offset(int delta) {
 }
 
 static const lv_image_dsc_t* icon_of(const App* a) {
-    return (const lv_image_dsc_t*)a->icon_img;
+    return (const lv_image_dsc_t*)(s_recolor ? a->icon_img_mono : a->icon_img);
 }
 
 // ─── icon construction ─────────────────────────────────────────────────────
@@ -82,6 +96,10 @@ static lv_obj_t* make_icon(int x, int32_t scale, lv_opa_t opa,
     lv_image_set_pivot(img, dsc->header.w / 2, dsc->header.h / 2);
     lv_image_set_scale(img, scale);
     lv_obj_set_style_opa(img, opa, 0);
+    if (s_recolor) {   // simple skin: tint the mono glyph amber
+        lv_obj_set_style_image_recolor(img, lv_color_hex(COL_AMBER), 0);
+        lv_obj_set_style_image_recolor_opa(img, LV_OPA_COVER, 0);
+    }
     lv_obj_align(img, LV_ALIGN_CENTER, 0, Y_OFFSET);
     lv_obj_set_style_translate_x(img, x, 0);
     return img;
@@ -236,6 +254,10 @@ static void rotate(int delta) {
 // ─── touch gesture (whole-screen swipe) ────────────────────────────────────
 
 static void on_screen_gesture(lv_event_t* e) {
+    // This cb lives on the shared active screen. Bail if the launcher isn't the
+    // current app (icons are NULL) — otherwise a gesture in another app would
+    // run rotate() against deleted icons and dereference NULL.
+    if (!s_icon_center) return;
     if (s_animating) return;
     if (lv_event_get_code(e) != LV_EVENT_GESTURE) return;
     lv_indev_t* indev = lv_indev_active();
@@ -249,6 +271,7 @@ static void on_screen_gesture(lv_event_t* e) {
 
 void enter(lv_obj_t* parent) {
     s_root = parent;
+    s_recolor = !load_skin_rich();   // simple skin → recolour the mono glyphs
     lv_obj_set_style_bg_color(s_root, lv_color_black(), 0);
     lv_obj_set_style_bg_opa(s_root, LV_OPA_COVER, 0);
 
@@ -311,6 +334,10 @@ void leave() {
     if (s_leaving)     lv_anim_delete(s_leaving,     nullptr);
 
     if (s_root) {
+        // The gesture cb is on the shared screen, not a child — clean() won't
+        // remove it. Drop it explicitly so it doesn't fire (or accumulate)
+        // after we leave.
+        lv_obj_remove_event_cb(s_root, on_screen_gesture);
         lv_obj_clean(s_root);
         s_root = nullptr;
     }

@@ -23,6 +23,7 @@ namespace app_settings {
 static uint8_t s_brightness    = 200;
 static uint8_t s_volume        = 180;
 static bool    s_vibration_on  = true;
+static bool    s_skin_rich     = true;   // launcher icons: rich colour vs simple
 
 bool vibrationEnabled() { return s_vibration_on; }
 uint8_t brightness()    { return s_brightness; }
@@ -33,6 +34,7 @@ static void load_prefs() {
     s_brightness   = p.getUChar("brightness", 200);
     s_volume       = p.getUChar("volume",     180);
     s_vibration_on = p.getBool ("vibrate",    true);
+    s_skin_rich    = p.getBool ("skin_rich",  true);
     p.end();
 }
 
@@ -103,6 +105,14 @@ static void on_vib_change(lv_event_t* e) {
     lv_obj_t* sw = (lv_obj_t*)lv_event_get_target(e);
     s_vibration_on = lv_obj_has_state(sw, LV_STATE_CHECKED);
     save_bool("vibrate", s_vibration_on);
+}
+
+static void on_skin_change(lv_event_t* e) {
+    lv_obj_t* sw = (lv_obj_t*)lv_event_get_target(e);
+    s_skin_rich = lv_obj_has_state(sw, LV_STATE_CHECKED);
+    save_bool("skin_rich", s_skin_rich);
+    // The launcher re-reads the skin in enter(), so it takes effect next time
+    // the home screen is shown (e.g. on returning from Settings).
 }
 
 // ── action rows ──────────────────────────────────────────────────────────
@@ -217,6 +227,17 @@ void enter(lv_obj_t* parent) {
         lv_obj_set_style_bg_color(sw, lv_color_hex(0x4A3828), LV_PART_MAIN);
         lv_obj_set_style_bg_color(sw, lv_color_hex(0xE6A050), LV_PART_INDICATOR | LV_STATE_CHECKED);
         lv_obj_add_event_cb(sw, on_vib_change, LV_EVENT_VALUE_CHANGED, nullptr);
+    }
+
+    // Icon skin switch — on = rich colour pack, off = simple Phosphor glyphs.
+    {
+        lv_obj_t* row = make_row(s_scroll);
+        row_text(row, "Rich icons");
+        lv_obj_t* sw = lv_switch_create(row);
+        if (s_skin_rich) lv_obj_add_state(sw, LV_STATE_CHECKED);
+        lv_obj_set_style_bg_color(sw, lv_color_hex(0x4A3828), LV_PART_MAIN);
+        lv_obj_set_style_bg_color(sw, lv_color_hex(0xE6A050), LV_PART_INDICATOR | LV_STATE_CHECKED);
+        lv_obj_add_event_cb(sw, on_skin_change, LV_EVENT_VALUE_CHANGED, nullptr);
     }
 
     // WiFi row — tap to reconfigure

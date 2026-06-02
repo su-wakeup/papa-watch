@@ -21,9 +21,11 @@ struct App {
     // hard-wired to back-to-launcher and not exposed to apps.
     void (*on_button_a)();
     void (*on_button_b)();
-    // Launcher carousel icon: an lv_image_dsc_t* (void to keep this header
-    // lvgl-free). nullptr for apps not shown in the wheel (e.g. HOME).
+    // Launcher carousel icons: lv_image_dsc_t* (void to keep this header
+    // lvgl-free). _img is the rich colour skin, _img_mono the simple skin.
+    // nullptr for apps not shown in the wheel (e.g. HOME).
     const void* icon_img;
+    const void* icon_img_mono;
 };
 
 extern const App* const g_apps[];
