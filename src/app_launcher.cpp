@@ -45,8 +45,8 @@ static lv_obj_t*   s_leaving   = nullptr;     // icon to delete on anim complete
 static constexpr int      ANIM_MS       = 240;
 static constexpr int32_t  SCALE_SIDE    = 128;   // 256 = 1.0x, so 128 = 0.5x
 static constexpr int32_t  SCALE_CENTER  = 256;
-static constexpr uint32_t COL_AMBER     = 0xE6A050;
-static constexpr uint32_t COL_DIM       = 0x705840;
+static constexpr lv_opa_t OPA_CENTER    = 255;   // center pops, sides recede —
+static constexpr lv_opa_t OPA_SIDE      = 150;   // colour icons dim by opacity
 static constexpr int      POS_LEFT_X    = -160;
 static constexpr int      POS_CENTER_X  = 0;
 static constexpr int      POS_RIGHT_X   = 160;
@@ -71,21 +71,17 @@ static const lv_image_dsc_t* icon_of(const App* a) {
 // An lv_image scaled from its own center pivot, positioned by translate_x.
 // The object box is always the native image size, so scaling (a render-time
 // transform around the pivot) keeps the icon centered on its slot — no drift.
-static lv_obj_t* make_icon(int x, int32_t scale, uint32_t color,
+// Icons are full-colour, so the side/center emphasis is opacity, not recolour.
+static lv_obj_t* make_icon(int x, int32_t scale, lv_opa_t opa,
                            const lv_image_dsc_t* dsc) {
     lv_obj_t* img = lv_image_create(s_root);
     lv_image_set_src(img, dsc);
     lv_image_set_pivot(img, dsc->header.w / 2, dsc->header.h / 2);
     lv_image_set_scale(img, scale);
-    lv_obj_set_style_image_recolor(img, lv_color_hex(color), 0);
-    lv_obj_set_style_image_recolor_opa(img, LV_OPA_COVER, 0);
+    lv_obj_set_style_opa(img, opa, 0);
     lv_obj_align(img, LV_ALIGN_CENTER, 0, Y_OFFSET);
     lv_obj_set_style_translate_x(img, x, 0);
     return img;
-}
-
-static void set_icon_color(lv_obj_t* img, uint32_t color) {
-    lv_obj_set_style_image_recolor(img, lv_color_hex(color), 0);
 }
 
 // ─── LVGL animation exec wrappers ──────────────────────────────────────────
@@ -148,7 +144,7 @@ static void rotate(int delta) {
     const int incoming_start_x    = (delta > 0) ?  POS_OFFSCREEN : -POS_OFFSCREEN;
     const int incoming_end_x      = (delta > 0) ?  POS_RIGHT_X   :  POS_LEFT_X;
 
-    lv_obj_t* incoming = make_icon(incoming_start_x, SCALE_SIDE, COL_DIM,
+    lv_obj_t* incoming = make_icon(incoming_start_x, SCALE_SIDE, OPA_SIDE,
                                    icon_of(app_at_offset(offset_for_incoming)));
     lv_obj_set_style_opa(incoming, 0, 0);
     lv_obj_add_flag(incoming, LV_OBJ_FLAG_CLICKABLE);
@@ -181,7 +177,7 @@ static void rotate(int delta) {
     anim_int(leaving, exec_x,
              (delta > 0) ? POS_LEFT_X : POS_RIGHT_X,
              leaving_offscreen_x);
-    anim_int(leaving, exec_opa, 255, 0);
+    anim_int(leaving, exec_opa, OPA_SIDE, 0);
 
     // Outgoing center — slide to side slot, shrink.
     anim_int(outgoing_center, exec_x, POS_CENTER_X, outgoing_center_end_x);
@@ -205,12 +201,12 @@ static void rotate(int delta) {
         lv_anim_set_completed_cb(&a, on_rotate_complete);
         lv_anim_start(&a);
     }
-    anim_int(incoming, exec_opa, 0, 255);
+    anim_int(incoming, exec_opa, 0, OPA_SIDE);
 
-    // Recolour the two role-changers. Snapped at anim start — reads cleanly
-    // against the simultaneous slide+scale.
-    set_icon_color(outgoing_center, COL_DIM);
-    set_icon_color(incoming_center, COL_AMBER);
+    // Dim/brighten the two role-changers in step with the slide+scale: the old
+    // center recedes to side opacity, the rising side brightens to full.
+    anim_int(outgoing_center, exec_opa, OPA_CENTER, OPA_SIDE);
+    anim_int(incoming_center, exec_opa, OPA_SIDE, OPA_CENTER);
 
     // Reassign role pointers so subsequent rotations stack cleanly.
     if (delta > 0) {
@@ -262,17 +258,17 @@ void enter(lv_obj_t* parent) {
     lv_obj_add_event_cb(s_root, on_screen_gesture, LV_EVENT_GESTURE, nullptr);
 
     // Three icons — left & right small/dim, center big/amber.
-    s_icon_left = make_icon(POS_LEFT_X, SCALE_SIDE, COL_DIM,
+    s_icon_left = make_icon(POS_LEFT_X, SCALE_SIDE, OPA_SIDE,
                             icon_of(app_at_offset(-1)));
     lv_obj_add_flag(s_icon_left, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(s_icon_left, on_icon_click, LV_EVENT_CLICKED, nullptr);
 
-    s_icon_right = make_icon(POS_RIGHT_X, SCALE_SIDE, COL_DIM,
+    s_icon_right = make_icon(POS_RIGHT_X, SCALE_SIDE, OPA_SIDE,
                              icon_of(app_at_offset(+1)));
     lv_obj_add_flag(s_icon_right, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(s_icon_right, on_icon_click, LV_EVENT_CLICKED, nullptr);
 
-    s_icon_center = make_icon(POS_CENTER_X, SCALE_CENTER, COL_AMBER,
+    s_icon_center = make_icon(POS_CENTER_X, SCALE_CENTER, OPA_CENTER,
                               icon_of(app_at_offset(0)));
     lv_obj_add_flag(s_icon_center, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(s_icon_center, on_icon_click, LV_EVENT_CLICKED, nullptr);
