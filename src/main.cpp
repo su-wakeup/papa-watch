@@ -638,6 +638,17 @@ void loop() {
             Serial.printf("[heap] free=%uKB min=%uKB streak=%d\n",
                           (unsigned)free_kb, (unsigned)min_kb,
                           s_low_heap_streak);
+            // Power baseline telemetry — correlate current draw with state.
+            // (On USB this reads charge current; unplug to see discharge.)
+            Serial.printf("[batt] %dmV  %dmA  %d%%  chg=%d  bright=%d  dim=%d\n",
+                          (int)M5.Power.getBatteryVoltage(),
+                          (int)M5.Power.getBatteryCurrent(),
+                          (int)M5.Power.getBatteryLevel(),
+                          (int)M5.Power.isCharging(),
+                          (int)app_settings::brightness(),
+                          (int)wake_gesture::isSleeping());
+            status_bar::setBattery((int)M5.Power.getBatteryLevel(),
+                                   (int)M5.Power.isCharging() > 0);
             // Only restart on *sustained* lows. Transient dips during heavy
             // UI work (Settings open, WiFi scan, OTA manifest fetch) are
             // normal and resolve when the widget tree settles — the old

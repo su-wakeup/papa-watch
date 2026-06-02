@@ -57,6 +57,7 @@ static lv_obj_t* s_scroll    = nullptr;
 static lv_obj_t* s_wifi_row  = nullptr;
 static lv_obj_t* s_dad_row   = nullptr;
 static lv_obj_t* s_geo_row   = nullptr;
+static lv_obj_t* s_power_row = nullptr;
 
 // ── row factory ──────────────────────────────────────────────────────────
 static lv_obj_t* make_row(lv_obj_t* parent) {
@@ -294,15 +295,35 @@ void enter(lv_obj_t* parent) {
         snprintf(buf, sizeof(buf), "v%s  up %u min", ota::FIRMWARE_VERSION, up_min);
         row_text(row, buf, 0xB88860);
     }
+
+    // Power diagnostics (engineering) — live battery V / mA / % / charge state.
+    // Unplug USB and read mA here for the power-saving baseline.
+    {
+        s_power_row = make_row(s_scroll);
+        row_text(s_power_row, "Power: ...", 0x9A8A70);
+    }
 }
 
 void leave() {
     if (s_root) { lv_obj_clean(s_root); s_root = nullptr; }
     s_scroll = nullptr;
-    s_wifi_row = s_dad_row = s_geo_row = nullptr;
+    s_wifi_row = s_dad_row = s_geo_row = s_power_row = nullptr;
 }
 
-void tick() {}
+void tick() {
+    if (!s_power_row) return;
+    static uint32_t s_last = 0;
+    if (millis() - s_last < 800) return;      // ~1 Hz is plenty
+    s_last = millis();
+    char buf[64];
+    snprintf(buf, sizeof(buf), "Power: %d.%02dV  %dmA  %d%%  %s",
+             (int)M5.Power.getBatteryVoltage() / 1000,
+             ((int)M5.Power.getBatteryVoltage() % 1000) / 10,
+             (int)M5.Power.getBatteryCurrent(),
+             (int)M5.Power.getBatteryLevel(),
+             (int)M5.Power.isCharging() > 0 ? "chg" : "bat");
+    lv_label_set_text(lv_obj_get_child(s_power_row, 0), buf);
+}
 
 void scroll_up()   { if (s_scroll) lv_obj_scroll_by(s_scroll, 0,  64, LV_ANIM_ON); }
 void scroll_down() { if (s_scroll) lv_obj_scroll_by(s_scroll, 0, -64, LV_ANIM_ON); }

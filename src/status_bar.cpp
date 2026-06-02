@@ -7,31 +7,43 @@ namespace status_bar {
 static lv_obj_t* s_wifi   = nullptr;
 static lv_obj_t* s_mqtt   = nullptr;
 static lv_obj_t* s_unread = nullptr;
+static lv_obj_t* s_batt   = nullptr;
 
-static constexpr uint32_t COL_ON   = 0xCFC2A8;
-static constexpr uint32_t COL_OFF  = 0x4A3828;
-static constexpr uint32_t COL_BELL = 0xE6A050;
+// Dim, warm palette. The panel's black is true-black (pixels off), so even a
+// muted colour pops — keep these low-luminance so the status recedes.
+static constexpr uint32_t COL_ON   = 0x4C4029;   // connected: very dim gold
+static constexpr uint32_t COL_OFF  = 0x241B10;   // disconnected: nearly black
+static constexpr uint32_t COL_BELL = 0x6E4E26;
+static constexpr uint32_t COL_BATT = 0x453E2C;
 
+// Items sit on a gentle top arc (centre highest, sides lower) so they hug the
+// round edge instead of a flat row. (x, y) are TOP_MID align offsets.
 void create(lv_obj_t* parent) {
+    s_batt = lv_label_create(parent);   // apex — the info people actually want
+    lv_obj_set_style_text_font(s_batt, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(s_batt, lv_color_hex(COL_BATT), 0);
+    lv_label_set_text(s_batt, "");
+    lv_obj_align(s_batt, LV_ALIGN_TOP_MID, 0, 16);
+
     s_wifi = lv_label_create(parent);
-    lv_obj_set_style_text_font(s_wifi, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_font(s_wifi, &lv_font_montserrat_18, 0);
     lv_label_set_text(s_wifi, LV_SYMBOL_WIFI);
-    lv_obj_align(s_wifi, LV_ALIGN_TOP_MID, -22, 14);
+    lv_obj_align(s_wifi, LV_ALIGN_TOP_MID, -64, 30);
 
     s_mqtt = lv_label_create(parent);
-    lv_obj_set_style_text_font(s_mqtt, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_font(s_mqtt, &lv_font_montserrat_18, 0);
     lv_label_set_text(s_mqtt, LV_SYMBOL_LOOP);
-    lv_obj_align(s_mqtt, LV_ALIGN_TOP_MID, 0, 14);
+    lv_obj_align(s_mqtt, LV_ALIGN_TOP_MID, 64, 30);
 
-    s_unread = lv_label_create(parent);
-    lv_obj_set_style_text_font(s_unread, &lv_font_montserrat_14, 0);
+    s_unread = lv_label_create(parent);   // transient — sits just under the apex
+    lv_obj_set_style_text_font(s_unread, &lv_font_montserrat_18, 0);
     lv_obj_set_style_text_color(s_unread, lv_color_hex(COL_BELL), 0);
     lv_label_set_text(s_unread, "");
-    lv_obj_align(s_unread, LV_ALIGN_TOP_MID, 30, 14);
+    lv_obj_align(s_unread, LV_ALIGN_TOP_MID, 0, 42);
 }
 
 void destroy() {
-    s_wifi = s_mqtt = s_unread = nullptr;     // parent owns the widgets
+    s_wifi = s_mqtt = s_unread = s_batt = nullptr;  // parent owns the widgets
 }
 
 void update(bool wifi_connected, bool mqtt_connected, int unread_count) {
@@ -47,6 +59,13 @@ void update(bool wifi_connected, bool mqtt_connected, int unread_count) {
     } else {
         lv_label_set_text(s_unread, "");
     }
+}
+
+void setBattery(int pct, bool charging) {
+    if (!s_batt) return;
+    char buf[16];
+    snprintf(buf, sizeof(buf), "%s%d%%", charging ? LV_SYMBOL_CHARGE " " : "", pct);
+    lv_label_set_text(s_batt, buf);
 }
 
 }  // namespace status_bar

@@ -15,5 +15,6 @@ namespace status_bar {
 void create(lv_obj_t* parent);
 void destroy();
 void update(bool wifi_connected, bool mqtt_connected, int unread_count);
+void setBattery(int pct, bool charging);     // percentage only on the face
 
 }  // namespace status_bar
