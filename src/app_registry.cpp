@@ -10,6 +10,7 @@
 #include "app_sundial.h"
 #include "app_schedule.h"
 #include "face_manager.h"
+#include "icons/icons.h"
 #include <lvgl.h>
 
 // ── per-app enter/leave/tick trampolines ─────────────────────────────────
@@ -70,13 +71,13 @@ STUB_APP(papachat,  "\xEE\x85\xAC", "PAPA")
 //   house          U+E2C2   → "\xEE\x8B\x82"  (launcher's own icon, unused by the grid)
 
 static const App APP_LAUNCHER  = { "HOME",      "\xEE\x8B\x82", launcher_enter,  launcher_leave,  launcher_tick,  launcher_btn_a,  launcher_btn_b };
-static const App APP_WATCH     = { "WATCH",     "\xEE\x93\xA6", watch_enter,     watch_leave,     watch_tick,     nullptr,         nullptr        };
-static const App APP_STOPWATCH = { "STOPWATCH", "\xEE\x92\x92", stopwatch_enter, stopwatch_leave, stopwatch_tick, stopwatch_btn_a, stopwatch_btn_b};
-static const App APP_SCHEDULE  = { "SCHEDULE",  "\xEE\x84\x8A", schedule_enter,  schedule_leave,  schedule_tick,  nullptr,         nullptr        };
-static const App APP_AICHAT    = { "AI CHAT",   "\xEE\x9D\xA2", aichat_enter,    aichat_leave,    aichat_tick,    nullptr,         nullptr        };
-static const App APP_PAPACHAT  = { "PAPA",      "\xEE\x85\xAC", papachat_enter,  papachat_leave,  papachat_tick,  nullptr,         nullptr        };
-static const App APP_COMPASS   = { "SUNDIAL",   "\xEE\x87\x88", compass_enter,   compass_leave,   compass_tick,   nullptr,         nullptr        };  // no A/B; touch only
-static const App APP_SETTINGS  = { "SETTINGS",  "\xEE\x89\xB2", settings_enter,  settings_leave,  settings_tick,  settings_btn_a,  settings_btn_b };
+static const App APP_WATCH     = { "WATCH",     "\xEE\x93\xA6", watch_enter,     watch_leave,     watch_tick,     nullptr,         nullptr,         &icon_watch     };
+static const App APP_STOPWATCH = { "STOPWATCH", "\xEE\x92\x92", stopwatch_enter, stopwatch_leave, stopwatch_tick, stopwatch_btn_a, stopwatch_btn_b, &icon_stopwatch };
+static const App APP_SCHEDULE  = { "SCHEDULE",  "\xEE\x84\x8A", schedule_enter,  schedule_leave,  schedule_tick,  nullptr,         nullptr,         &icon_schedule  };
+static const App APP_AICHAT    = { "AI CHAT",   "\xEE\x9D\xA2", aichat_enter,    aichat_leave,    aichat_tick,    nullptr,         nullptr,         &icon_aichat    };
+static const App APP_PAPACHAT  = { "PAPA",      "\xEE\x85\xAC", papachat_enter,  papachat_leave,  papachat_tick,  nullptr,         nullptr,         &icon_papa      };
+static const App APP_COMPASS   = { "SUNDIAL",   "\xEE\x87\x88", compass_enter,   compass_leave,   compass_tick,   nullptr,         nullptr,         &icon_compass   };  // no A/B; touch only
+static const App APP_SETTINGS  = { "SETTINGS",  "\xEE\x89\xB2", settings_enter,  settings_leave,  settings_tick,  settings_btn_a,  settings_btn_b,  &icon_settings  };
 
 const App* const g_apps[] = {
     &APP_LAUNCHER,   // [0] reserved — home grid, skipped by launcher iteration

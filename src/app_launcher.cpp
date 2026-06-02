@@ -1,22 +1,16 @@
 // app_launcher — home wheel of app icons.
 //
 // Three icons are visible at once: left and right small/dim, center big/amber.
-// Pressing BtnA / BtnB or swiping left/right kicks off a 240 ms animation: the
-// leaving icon slides off + fades, the previous side icon slides into the
-// center, the old center slides into the side slot, and a freshly-spawned icon
+// BtnA / BtnB or a swipe kicks off a 240 ms animation: the leaving icon slides
+// off + fades, the previous side icon slides into the center AND scales up, the
+// old center slides to the side AND scales down, and a freshly-spawned icon
 // glides in from the opposite edge.
 //
-// Each icon lives in a FIXED-size cell positioned by translate_x; the glyph
-// label is centered inside it. Decoupling the (fixed) cell geometry from the
-// (font-dependent) glyph size is deliberate: it means swapping the font to
-// resize an icon never drifts it off its slot, and the drift can't accumulate
-// across rotations.
-//
-// Size is two baked font sizes (phosphor_64 side, phosphor_128 center) swapped
-// at the role change — NOT runtime transform_scale. transform_scale forces
-// LVGL to render the object into a ~144 KB intermediate layer buffer that does
-// not fit the LVGL mem pool, which hung the v0.9.12 build on boot. Motion is
-// translate_x + opacity only; neither needs a layer buffer.
+// Icons are A8 lv_image masks (see src/icons/), scaled with lv_image_set_scale
+// and recoloured per slot (amber center, dim sides). Image scaling renders in
+// the blit — it does NOT allocate a per-object layer buffer the way
+// transform_scale on a big font glyph did (that ~144 KB alloc is what hung the
+// v0.9.12 build on boot). So the size can interpolate smoothly without OOM.
 //
 // Touch:
 //   - swipe LEFT  → rotate to next (same as BtnB)
@@ -30,8 +24,6 @@
 #include <lvgl.h>
 #include <stdint.h>
 
-LV_FONT_DECLARE(phosphor_64);
-LV_FONT_DECLARE(phosphor_128);
 LV_FONT_DECLARE(mont_light_14);
 LV_FONT_DECLARE(mont_light_32);
 
@@ -51,6 +43,8 @@ static bool        s_animating = false;
 static lv_obj_t*   s_leaving   = nullptr;     // icon to delete on anim complete
 
 static constexpr int      ANIM_MS       = 240;
+static constexpr int32_t  SCALE_SIDE    = 128;   // 256 = 1.0x, so 128 = 0.5x
+static constexpr int32_t  SCALE_CENTER  = 256;
 static constexpr uint32_t COL_AMBER     = 0xE6A050;
 static constexpr uint32_t COL_DIM       = 0x705840;
 static constexpr int      POS_LEFT_X    = -160;
@@ -58,8 +52,6 @@ static constexpr int      POS_CENTER_X  = 0;
 static constexpr int      POS_RIGHT_X   = 160;
 static constexpr int      POS_OFFSCREEN = 320;
 static constexpr int      Y_OFFSET      = -10;
-static constexpr int      CELL_W        = 170;   // fits the 128 px center glyph
-static constexpr int      CELL_H        = 150;
 
 static int wheel_count() { return g_apps_count - 1; }   // skip launcher slot
 
@@ -70,45 +62,39 @@ static const App* app_at_offset(int delta) {
     return g_apps[1 + rel];
 }
 
+static const lv_image_dsc_t* icon_of(const App* a) {
+    return (const lv_image_dsc_t*)a->icon_img;
+}
+
 // ─── icon construction ─────────────────────────────────────────────────────
 
-// A fixed-size, invisible cell positioned by translate_x, with the glyph label
-// centered inside. The cell is what the animation moves; the label is what
-// changes size. Keeping them separate is what keeps the icon centred.
-static lv_obj_t* make_icon(int x, const lv_font_t* font,
-                           uint32_t color, const char* glyph) {
-    lv_obj_t* cell = lv_obj_create(s_root);
-    lv_obj_remove_style_all(cell);
-    lv_obj_set_size(cell, CELL_W, CELL_H);
-    lv_obj_clear_flag(cell, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_align(cell, LV_ALIGN_CENTER, 0, Y_OFFSET);
-    lv_obj_set_style_translate_x(cell, x, 0);
-
-    lv_obj_t* lbl = lv_label_create(cell);
-    lv_obj_set_style_text_font(lbl, font, 0);
-    lv_obj_set_style_text_color(lbl, lv_color_hex(color), 0);
-    lv_label_set_text(lbl, glyph);
-    lv_obj_center(lbl);
-    return cell;
+// An lv_image scaled from its own center pivot, positioned by translate_x.
+// The object box is always the native image size, so scaling (a render-time
+// transform around the pivot) keeps the icon centered on its slot — no drift.
+static lv_obj_t* make_icon(int x, int32_t scale, uint32_t color,
+                           const lv_image_dsc_t* dsc) {
+    lv_obj_t* img = lv_image_create(s_root);
+    lv_image_set_src(img, dsc);
+    lv_image_set_pivot(img, dsc->header.w / 2, dsc->header.h / 2);
+    lv_image_set_scale(img, scale);
+    lv_obj_set_style_image_recolor(img, lv_color_hex(color), 0);
+    lv_obj_set_style_image_recolor_opa(img, LV_OPA_COVER, 0);
+    lv_obj_align(img, LV_ALIGN_CENTER, 0, Y_OFFSET);
+    lv_obj_set_style_translate_x(img, x, 0);
+    return img;
 }
 
-static lv_obj_t* icon_label(lv_obj_t* cell) { return lv_obj_get_child(cell, 0); }
-
-// Swap the glyph size; re-centre the label inside its (unchanged) cell.
-static void set_icon_font(lv_obj_t* cell, const lv_font_t* font) {
-    lv_obj_t* lbl = icon_label(cell);
-    lv_obj_set_style_text_font(lbl, font, 0);
-    lv_obj_update_layout(lbl);
-    lv_obj_center(lbl);
-}
-static void set_icon_color(lv_obj_t* cell, uint32_t color) {
-    lv_obj_set_style_text_color(icon_label(cell), lv_color_hex(color), 0);
+static void set_icon_color(lv_obj_t* img, uint32_t color) {
+    lv_obj_set_style_image_recolor(img, lv_color_hex(color), 0);
 }
 
-// ─── LVGL animation exec wrappers (operate on the cell) ────────────────────
+// ─── LVGL animation exec wrappers ──────────────────────────────────────────
 
 static void exec_x(void* obj, int32_t v) {
     lv_obj_set_style_translate_x((lv_obj_t*)obj, (int)v, 0);
+}
+static void exec_scale(void* obj, int32_t v) {
+    lv_image_set_scale((lv_obj_t*)obj, (uint32_t)v);
 }
 static void exec_opa(void* obj, int32_t v) {
     lv_obj_set_style_opa((lv_obj_t*)obj, (lv_opa_t)v, 0);
@@ -162,8 +148,8 @@ static void rotate(int delta) {
     const int incoming_start_x    = (delta > 0) ?  POS_OFFSCREEN : -POS_OFFSCREEN;
     const int incoming_end_x      = (delta > 0) ?  POS_RIGHT_X   :  POS_LEFT_X;
 
-    lv_obj_t* incoming = make_icon(incoming_start_x, &phosphor_64, COL_DIM,
-                                   app_at_offset(offset_for_incoming)->icon_utf8);
+    lv_obj_t* incoming = make_icon(incoming_start_x, SCALE_SIDE, COL_DIM,
+                                   icon_of(app_at_offset(offset_for_incoming)));
     lv_obj_set_style_opa(incoming, 0, 0);
     lv_obj_add_flag(incoming, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(incoming, on_icon_click, LV_EVENT_CLICKED, nullptr);
@@ -197,11 +183,13 @@ static void rotate(int delta) {
              leaving_offscreen_x);
     anim_int(leaving, exec_opa, 255, 0);
 
-    // Outgoing center — slide to side slot.
+    // Outgoing center — slide to side slot, shrink.
     anim_int(outgoing_center, exec_x, POS_CENTER_X, outgoing_center_end_x);
+    anim_int(outgoing_center, exec_scale, SCALE_CENTER, SCALE_SIDE);
 
-    // Incoming center — slide to center.
+    // Incoming center — slide to center, grow.
     anim_int(incoming_center, exec_x, incoming_center_start_x, POS_CENTER_X);
+    anim_int(incoming_center, exec_scale, SCALE_SIDE, SCALE_CENTER);
 
     // Incoming — slide from off-screen edge to its new side position.
     // Hook the completion cb here so it fires once when this last animation
@@ -219,11 +207,9 @@ static void rotate(int delta) {
     }
     anim_int(incoming, exec_opa, 0, 255);
 
-    // Swap size (font) + colour for the two icons changing role. Snapped at
-    // anim start — the eye reads it cleanly against the simultaneous slide.
-    set_icon_font (outgoing_center, &phosphor_64);
+    // Recolour the two role-changers. Snapped at anim start — reads cleanly
+    // against the simultaneous slide+scale.
     set_icon_color(outgoing_center, COL_DIM);
-    set_icon_font (incoming_center, &phosphor_128);
     set_icon_color(incoming_center, COL_AMBER);
 
     // Reassign role pointers so subsequent rotations stack cleanly.
@@ -267,28 +253,27 @@ void enter(lv_obj_t* parent) {
     lv_obj_set_style_bg_color(s_root, lv_color_black(), 0);
     lv_obj_set_style_bg_opa(s_root, LV_OPA_COVER, 0);
 
-    // The fixed-size icon cells overflow the viewport at their off-screen
-    // animation positions, which would make the root scrollable. Then a swipe
-    // gets eaten as an elastic scroll (rubber-banding the whole screen, status
-    // bar and all) and LV_EVENT_GESTURE never fires. Pin it down.
+    // The off-screen icons overflow the viewport, which would make the root
+    // scrollable — then a swipe gets eaten as an elastic scroll (rubber-banding
+    // the whole screen) and LV_EVENT_GESTURE never fires. Pin it down.
     lv_obj_clear_flag(s_root, LV_OBJ_FLAG_SCROLLABLE);
 
     // Whole-screen gesture sink for swipe navigation.
     lv_obj_add_event_cb(s_root, on_screen_gesture, LV_EVENT_GESTURE, nullptr);
 
     // Three icons — left & right small/dim, center big/amber.
-    s_icon_left = make_icon(POS_LEFT_X, &phosphor_64, COL_DIM,
-                            app_at_offset(-1)->icon_utf8);
+    s_icon_left = make_icon(POS_LEFT_X, SCALE_SIDE, COL_DIM,
+                            icon_of(app_at_offset(-1)));
     lv_obj_add_flag(s_icon_left, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(s_icon_left, on_icon_click, LV_EVENT_CLICKED, nullptr);
 
-    s_icon_right = make_icon(POS_RIGHT_X, &phosphor_64, COL_DIM,
-                             app_at_offset(+1)->icon_utf8);
+    s_icon_right = make_icon(POS_RIGHT_X, SCALE_SIDE, COL_DIM,
+                             icon_of(app_at_offset(+1)));
     lv_obj_add_flag(s_icon_right, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(s_icon_right, on_icon_click, LV_EVENT_CLICKED, nullptr);
 
-    s_icon_center = make_icon(POS_CENTER_X, &phosphor_128, COL_AMBER,
-                              app_at_offset(0)->icon_utf8);
+    s_icon_center = make_icon(POS_CENTER_X, SCALE_CENTER, COL_AMBER,
+                              icon_of(app_at_offset(0)));
     lv_obj_add_flag(s_icon_center, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(s_icon_center, on_icon_click, LV_EVENT_CLICKED, nullptr);
 
