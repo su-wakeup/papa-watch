@@ -17,6 +17,7 @@
 #include "ntp_sync.h"
 #include "lvgl_port.h"
 #include "face_boot.h"
+#include "boot_anim.h"
 #include "face_lcd.h"
 #include "face_manager.h"
 #include "face_term.h"
@@ -419,7 +420,13 @@ void setup() {
         spkCfg.magnification = 16;     // 24 distorted the 1318 cavity speaker
         M5.Speaker.config(spkCfg);
         M5.Speaker.begin();
+        M5.Speaker.setVolume(180);     // for the boot ceremony's coin chime
     }
+
+    // PaPaWatch boot ceremony — plays straight to the panel via M5GFX (before
+    // LVGL owns the display) with the coin chime synced to the light. Leaves
+    // the final frame up through the wifi/NTP wait.
+    boot_anim::play();
 
     // off-screen canvas for flicker-free redraws
     s_face.setPsram(true);
@@ -459,9 +466,8 @@ void setup() {
     // LVGL takes over the panel from here. Boot banner + wifi flow were direct M5GFX;
     // the watch face is now driven by LVGL widgets.
     lvgl_port::begin(468, 468);
-    // "Hello Stanley" greeting animation, then the LCD face. The transition
-    // happens in loop() once face_boot::finished() returns true.
-    face_boot::create();
+    // Boot ceremony already played pre-LVGL (boot_anim). The launcher is shown
+    // on the first loop() pass below.
 
     // ── heartbeat relay over MQTT ──
     heart_relay::setOnReceive([](const char* payload, unsigned int len) {
@@ -530,19 +536,9 @@ void setup() {
 
     Serial.printf("[ota] firmware v%s\n", ota::FIRMWARE_VERSION);
 
-    // ── boot beep: prove speaker output works ──
+    // (The coin jingle now plays inside boot_anim, synced to the animation.)
     Serial.printf("[spk] enabled=%d  vol=%d\n",
                   M5.Speaker.isEnabled(), M5.Speaker.getVolume());
-    // Boot jingle: pre-synthesized "coins falling" PCM (FM-bell synthesis,
-    // 1.7s @ 16kHz int16 mono, ~53KB in flash). Square-wave tone() can't make
-    // a real metallic timbre because it has no inharmonic partials — coins
-    // need the FM synthesis baked into the asset.
-    M5.Speaker.setVolume(180);
-    M5.Speaker.playRaw(boot_jingle_data, boot_jingle_samples,
-                       boot_jingle_sample_rate);
-    delay(boot_jingle_samples * 1000UL / boot_jingle_sample_rate + 50);
-    Serial.printf("[spk] coin jingle dispatched (%u samples @ %u Hz)\n",
-                  (unsigned)boot_jingle_samples, boot_jingle_sample_rate);
 
     Serial.printf("[boot] display %dx%d  PSRAM=%uKB  free=%uKB\n",
                   M5.Display.width(), M5.Display.height(),
@@ -664,15 +660,10 @@ void loop() {
     // so the path to time is two taps from cold boot.
     static bool s_boot_done = false;
     if (!s_boot_done) {
-        face_boot::update();
-        if (face_boot::finished()) {
-            face_boot::destroy();
-            app_runtime::switch_to(g_apps[0]);   // [0] = APP_LAUNCHER
-            heart_overlay::create();
-            s_boot_done = true;
-        }
-        delay(5);
-        return;
+        // The boot ceremony already played pre-LVGL; land on the launcher.
+        app_runtime::switch_to(g_apps[0]);   // [0] = APP_LAUNCHER
+        heart_overlay::create();
+        s_boot_done = true;
     }
     heart_overlay::update();
     app_runtime::tick();
