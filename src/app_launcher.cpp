@@ -43,7 +43,9 @@ static bool        s_animating = false;
 static lv_obj_t*   s_leaving   = nullptr;     // icon to delete on anim complete
 
 static constexpr int      ANIM_MS       = 240;
-static constexpr int32_t  SCALE_SIDE    = 128;   // 256 = 1.0x, so 128 = 0.5x
+// Icons are 224 px native. Center shows at 1.0x (big focal icon); sides shrink
+// to ~64 px (73/256 of native) — same side size as before, much larger center.
+static constexpr int32_t  SCALE_SIDE    = 73;
 static constexpr int32_t  SCALE_CENTER  = 256;
 static constexpr lv_opa_t OPA_CENTER    = 255;   // center pops, sides recede —
 static constexpr lv_opa_t OPA_SIDE      = 150;   // colour icons dim by opacity
@@ -51,7 +53,8 @@ static constexpr int      POS_LEFT_X    = -160;
 static constexpr int      POS_CENTER_X  = 0;
 static constexpr int      POS_RIGHT_X   = 160;
 static constexpr int      POS_OFFSCREEN = 320;
-static constexpr int      Y_OFFSET      = -10;
+static constexpr int      Y_OFFSET      = -28;   // lift the row so the bigger
+                                                 // center icon clears the name
 
 static int wheel_count() { return g_apps_count - 1; }   // skip launcher slot
 
@@ -277,7 +280,7 @@ void enter(lv_obj_t* parent) {
     s_name = lv_label_create(s_root);
     lv_obj_set_style_text_font(s_name, &mont_light_32, 0);
     lv_obj_set_style_text_color(s_name, lv_color_hex(0xF5E8D0), 0);
-    lv_obj_align(s_name, LV_ALIGN_CENTER, 0, 90);
+    lv_obj_align(s_name, LV_ALIGN_CENTER, 0, 135);
     lv_label_set_text(s_name, app_at_offset(0)->name);
 
     // BtnA / BtnB hint labels (near physical buttons).

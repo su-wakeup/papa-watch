@@ -12,8 +12,8 @@ import os, sys
 
 SRC    = sys.argv[1] if len(sys.argv) > 1 else "/tmp/iconpack"
 OUT    = "assets/icons"
-CANVAS = 128
-FIT    = 104          # longest glyph side, leaving ~12px margin
+CANVAS = 224         # native px; center shows at 1.0x, sides scaled down
+FIT    = 200          # longest subject side, leaving a small margin
 
 # source filename (in pack) -> our icon name
 MAP = {
