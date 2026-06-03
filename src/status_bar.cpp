@@ -68,4 +68,26 @@ void setBattery(int pct, bool charging) {
     lv_label_set_text(s_batt, buf);
 }
 
+int battPctFromMv(int mv) {
+    // Approximate single-cell Li-ion resting OCV→SoC. M5Unified's getBatteryLevel
+    // is a flat linear 3300→4100mV map that pins 100% for everything above 4.10V;
+    // this curve lets the top of the range actually move. Still approximate
+    // (voltage sags under load, recovers at rest) but far more honest mid-range.
+    static const struct { int mv; int pct; } TBL[] = {
+        {4200,100},{4100,90},{4000,76},{3900,60},{3800,42},
+        {3700,24},{3600,11},{3500,5},{3300,0},
+    };
+    const int N = sizeof(TBL) / sizeof(TBL[0]);
+    if (mv >= TBL[0].mv)   return 100;
+    if (mv <= TBL[N-1].mv) return 0;
+    for (int i = 0; i < N - 1; i++) {
+        if (mv <= TBL[i].mv && mv > TBL[i+1].mv) {
+            int dmv  = TBL[i].mv  - TBL[i+1].mv;
+            int dpct = TBL[i].pct - TBL[i+1].pct;
+            return TBL[i+1].pct + (mv - TBL[i+1].mv) * dpct / dmv;
+        }
+    }
+    return 0;
+}
+
 }  // namespace status_bar

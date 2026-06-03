@@ -654,8 +654,9 @@ void loop() {
                           (unsigned)getCpuFrequencyMhz(),
                           (int)wake_gesture::isSleeping(),
                           (int)app_settings::brightness());
-            status_bar::setBattery((int)M5.Power.getBatteryLevel(),
-                                   (int)M5.Power.isCharging() > 0);
+            status_bar::setBattery(
+                status_bar::battPctFromMv((int)M5.Power.getBatteryVoltage()),
+                (int)M5.Power.isCharging() > 0);
             // Only restart on *sustained* lows. Transient dips during heavy
             // UI work (Settings open, WiFi scan, OTA manifest fetch) are
             // normal and resolve when the widget tree settles — the old

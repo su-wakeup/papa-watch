@@ -16,5 +16,6 @@ void create(lv_obj_t* parent);
 void destroy();
 void update(bool wifi_connected, bool mqtt_connected, int unread_count);
 void setBattery(int pct, bool charging);     // percentage only on the face
+int  battPctFromMv(int mv);                  // Li-ion OCV→SoC (beats M5's linear map)
 
 }  // namespace status_bar
