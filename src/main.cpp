@@ -460,6 +460,11 @@ void setup() {
                   wifi_setup::currentSSID().c_str(),
                   WiFi.localIP().toString().c_str());
 
+    // L2: modem-sleep — radio naps between DTIM beacons. MQTT hearts still
+    // arrive (~beacon-interval latency), but the WiFi radio stops drawing
+    // full-tilt the 99% of the time nothing's on the air.
+    WiFi.setSleep(true);
+
     // Pull real time from NTP and persist to hardware RTC.
     ntp_sync::syncTime(8000);
 
@@ -512,6 +517,7 @@ void setup() {
 
         Serial.printf("[heart] from=%s note=%s\n", from, note);
 
+        wake_gesture::notifyActivity();  // light the screen so the heart is seen, not just felt
         hapticHeartbeat();
         chimeReceive();
         s_unread_count++;
@@ -638,15 +644,16 @@ void loop() {
             Serial.printf("[heap] free=%uKB min=%uKB streak=%d\n",
                           (unsigned)free_kb, (unsigned)min_kb,
                           s_low_heap_streak);
-            // Power baseline telemetry — correlate current draw with state.
-            // (On USB this reads charge current; unplug to see discharge.)
-            Serial.printf("[batt] %dmV  %dmA  %d%%  chg=%d  bright=%d  dim=%d\n",
+            // Power telemetry. No current sensor on this board (M5PM1 has no
+            // Ibat register) so mA is always 0 — dropped. VBAT mV is the finest
+            // signal; % is a coarse voltage-derived SoC (real, just slow near
+            // full). Baseline a state by VBAT/%% droop over time, plus cpu/sleep.
+            Serial.printf("[batt] %dmV  %d%%  cpu=%uMHz  sleep=%d  bright=%d\n",
                           (int)M5.Power.getBatteryVoltage(),
-                          (int)M5.Power.getBatteryCurrent(),
                           (int)M5.Power.getBatteryLevel(),
-                          (int)M5.Power.isCharging(),
-                          (int)app_settings::brightness(),
-                          (int)wake_gesture::isSleeping());
+                          (unsigned)getCpuFrequencyMhz(),
+                          (int)wake_gesture::isSleeping(),
+                          (int)app_settings::brightness());
             status_bar::setBattery((int)M5.Power.getBatteryLevel(),
                                    (int)M5.Power.isCharging() > 0);
             // Only restart on *sustained* lows. Transient dips during heavy

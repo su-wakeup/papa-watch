@@ -296,8 +296,9 @@ void enter(lv_obj_t* parent) {
         row_text(row, buf, 0xB88860);
     }
 
-    // Power diagnostics (engineering) — live battery V / mA / % / charge state.
-    // Unplug USB and read mA here for the power-saving baseline.
+    // Power diagnostics (engineering) — live VBAT + % + CPU state. No current
+    // sensor on this board (mA absent), so baseline a state by VBAT/% droop
+    // over time. VBAT is finest; % is coarse but real.
     {
         s_power_row = make_row(s_scroll);
         row_text(s_power_row, "Power: ...", 0x9A8A70);
@@ -316,12 +317,11 @@ void tick() {
     if (millis() - s_last < 800) return;      // ~1 Hz is plenty
     s_last = millis();
     char buf[64];
-    snprintf(buf, sizeof(buf), "Power: %d.%02dV  %dmA  %d%%  %s",
-             (int)M5.Power.getBatteryVoltage() / 1000,
-             ((int)M5.Power.getBatteryVoltage() % 1000) / 10,
-             (int)M5.Power.getBatteryCurrent(),
+    int mv = (int)M5.Power.getBatteryVoltage();
+    snprintf(buf, sizeof(buf), "VBAT %d.%02dV  %d%%  CPU %uMHz",
+             mv / 1000, (mv % 1000) / 10,
              (int)M5.Power.getBatteryLevel(),
-             (int)M5.Power.isCharging() > 0 ? "chg" : "bat");
+             (unsigned)getCpuFrequencyMhz());
     lv_label_set_text(lv_obj_get_child(s_power_row, 0), buf);
 }
 
