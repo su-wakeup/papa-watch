@@ -34,6 +34,7 @@
 #include "dad_status.h"
 #include "heart_relay.h"
 #include "events_store.h"
+#include "papa_quote.h"
 #include "ota.h"
 #include <ArduinoJson.h>
 #include "audio/cow_moo.h"
@@ -511,6 +512,18 @@ void setup() {
             return;
         }
 
+        // Daily note from PAPA: {"cmd":"quote","text":".."}  (roadmap #5)
+        if (cmd && strcmp(cmd, "quote") == 0) {
+            const char* txt = doc["text"] | "";
+            papa_quote::set(txt);
+            Serial.printf("[quote] %s\n", txt);
+            wake_gesture::notifyActivity();   // light up so it's noticed
+            hapticHeartbeat();
+            chimeReceive();
+            face_lcd::showAlert("PAPA NOTE", 0xC8A050, 3000);
+            return;
+        }
+
         // Heart payload: {"t":..,"from":"..","note":".."}
         const char* note = doc["note"]  | "DAD HEART";
         const char* from = doc["from"]  | "";
@@ -538,6 +551,7 @@ void setup() {
         }
     });
     events_store::begin();
+    papa_quote::begin();
     heart_relay::begin("stanley-dad-2026");
 
     Serial.printf("[ota] firmware v%s\n", ota::FIRMWARE_VERSION);

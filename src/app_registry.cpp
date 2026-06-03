@@ -9,6 +9,7 @@
 #include "app_settings.h"
 #include "app_sundial.h"
 #include "app_schedule.h"
+#include "app_papachat.h"
 #include "face_manager.h"
 #include "icons/icons.h"
 #include <lvgl.h>
@@ -45,6 +46,10 @@ static void schedule_enter(lv_obj_t* p)  { app_schedule::enter(p); }
 static void schedule_leave()              { app_schedule::leave(); }
 static void schedule_tick()               { app_schedule::tick(); }
 
+static void papachat_enter(lv_obj_t* p)  { app_papachat::enter(p); }
+static void papachat_leave()              { app_papachat::leave(); }
+static void papachat_tick()               { app_papachat::tick(); }
+
 // Stub trampolines for apps whose UIs aren't built yet. Each just forwards
 // to app_stub::enter with its own name + Phosphor glyph so a tap at least
 // lands somewhere named. As each real app gets built, swap its trio of
@@ -56,7 +61,7 @@ static void schedule_tick()               { app_schedule::tick(); }
     static void idname##_tick()              { app_stub::tick(); }
 
 STUB_APP(aichat,    "\xEE\x9D\xA2", "AI CHAT")
-STUB_APP(papachat,  "\xEE\x85\xAC", "PAPA")
+// (papachat has a real implementation now — see papachat_enter/leave/tick above)
 // (compass has a real implementation — see compass_enter/leave/tick above)
 // (settings has a real implementation now — see settings_enter/leave/tick above)
 
