@@ -25,6 +25,8 @@ static void launcher_btn_b()             { app_launcher::rotate_right(); }
 static void watch_enter(lv_obj_t*)       { face_manager::create(); }
 static void watch_leave()                { face_manager::destroy(); }
 static void watch_tick()                 { face_manager::update(); }
+static void watch_btn_a()                { face_manager::buttonA(); }   // spin globe on world tile
+static void watch_btn_b()                { face_manager::buttonB(); }
 
 static void stopwatch_enter(lv_obj_t* p) { app_stopwatch::enter(p); }
 static void stopwatch_leave()             { app_stopwatch::leave(); }
@@ -76,7 +78,7 @@ STUB_APP(aichat,    "\xEE\x9D\xA2", "AI CHAT")
 //   house          U+E2C2   → "\xEE\x8B\x82"  (launcher's own icon, unused by the grid)
 
 static const App APP_LAUNCHER  = { "HOME",      "\xEE\x8B\x82", launcher_enter,  launcher_leave,  launcher_tick,  launcher_btn_a,  launcher_btn_b };
-static const App APP_WATCH     = { "WATCH",     "\xEE\x93\xA6", watch_enter,     watch_leave,     watch_tick,     nullptr,         nullptr,         &icon_watch,     &icon_watch_mono     };
+static const App APP_WATCH     = { "WATCH",     "\xEE\x93\xA6", watch_enter,     watch_leave,     watch_tick,     watch_btn_a,     watch_btn_b,     &icon_watch,     &icon_watch_mono     };
 static const App APP_STOPWATCH = { "STOPWATCH", "\xEE\x92\x92", stopwatch_enter, stopwatch_leave, stopwatch_tick, stopwatch_btn_a, stopwatch_btn_b, &icon_stopwatch, &icon_stopwatch_mono };
 static const App APP_SCHEDULE  = { "SCHEDULE",  "\xEE\x84\x8A", schedule_enter,  schedule_leave,  schedule_tick,  nullptr,         nullptr,         &icon_schedule,  &icon_schedule_mono  };
 static const App APP_AICHAT    = { "AI CHAT",   "\xEE\x9D\xA2", aichat_enter,    aichat_leave,    aichat_tick,    nullptr,         nullptr,         &icon_aichat,    &icon_aichat_mono    };

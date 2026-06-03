@@ -17,5 +17,7 @@ void create();
 void destroy();         // teardown for app exit — clears screen + nulls children
 void update();          // forwards refresh to the active face
 int  currentIndex();
+void buttonA();         // A/B forwarded from the Watch app; routed to active face
+void buttonB();
 
 }  // namespace face_manager

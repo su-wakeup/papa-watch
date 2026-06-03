@@ -89,6 +89,11 @@ void update() {
 
 int currentIndex() { return s_active_idx; }
 
+// A/B only mean something on the world-clock tile (#3), where they spin the
+// globe. On the other faces they're no-ops (A+B-to-launcher is handled upstream).
+void buttonA() { if (s_active_idx == 3) face_world::rotate(-1); }
+void buttonB() { if (s_active_idx == 3) face_world::rotate(+1); }
+
 void destroy() {
     // Tear down each child face so its statics go nullptr (their update()s
     // short-circuit on s_root==nullptr). Then nuke the tileview tree.
