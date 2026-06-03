@@ -1,12 +1,12 @@
 #include "app_stopwatch.h"
+#include "sw_ui/sw_assets.h"
 #include <lvgl.h>
 #include <esp_timer.h>
 #include <stdio.h>
 
-LV_FONT_DECLARE(mont_light_14);
 LV_FONT_DECLARE(mont_light_20);
 LV_FONT_DECLARE(mont_light_24);
-LV_FONT_DECLARE(mont_light_72_digits);
+LV_FONT_DECLARE(mont_light_48_digits);   // sized to fit the 368x96 glass window
 
 namespace app_stopwatch {
 
@@ -20,16 +20,18 @@ static constexpr int MAX_LAPS = 20;
 static int64_t  s_laps_us[MAX_LAPS] = {};
 static int      s_lap_count = 0;
 
-// ── widget refs (rebuilt on every enter) ────────────────────────────────────
+// ── widget refs (rebuilt on every enter) — mechanical-chronograph skin ──────
+static constexpr int LAP_ROWS = 4;
 static lv_obj_t* s_root        = nullptr;
-static lv_obj_t* s_hero_pill   = nullptr;
-static lv_obj_t* s_time_lbl    = nullptr;
-static lv_obj_t* s_status_lbl  = nullptr;
-static lv_obj_t* s_btn_run     = nullptr;
-static lv_obj_t* s_btn_run_lbl = nullptr;
-static lv_obj_t* s_btn_aux     = nullptr;
-static lv_obj_t* s_btn_aux_lbl = nullptr;
-static lv_obj_t* s_lap_list    = nullptr;
+static lv_obj_t* s_badge       = nullptr;   // status pill + LED (image swapped by state)
+static lv_obj_t* s_status_lbl  = nullptr;   // READY / RUNNING / PAUSED text on the pill
+static lv_obj_t* s_time_lbl    = nullptr;   // big MM:SS.cc in the glass window
+static lv_obj_t* s_btn_left    = nullptr;   // START / STOP / RESUME (image)
+static lv_obj_t* s_btn_left_lbl= nullptr;
+static lv_obj_t* s_btn_right   = nullptr;   // LAP / RESET (image)
+static lv_obj_t* s_btn_right_lbl=nullptr;
+static lv_obj_t* s_lap_panel   = nullptr;   // lap board image
+static lv_obj_t* s_lap_row[LAP_ROWS] = {};  // up to 4 most-recent laps
 
 static int64_t elapsed_us() {
     if (s_state == RUNNING) {
@@ -38,89 +40,78 @@ static int64_t elapsed_us() {
     return s_accumulated_us;
 }
 
-// Format microseconds as "MM:SS.cc" (centiseconds). Cap minutes at 99 since
-// we only have 8 chars worth of hero space; longer sessions overflow visually
-// but the lap math is still correct.
+// Format microseconds as "MM:SS.cc" (centiseconds). Minutes cap at 99.
 static void format_mmsscc(char* buf, size_t n, int64_t us) {
-    int64_t cs_total = us / 10000;            // centiseconds
+    int64_t cs_total = us / 10000;
     int mm = (int)((cs_total / 6000) % 100);
     int ss = (int)((cs_total / 100) % 60);
     int cc = (int)(cs_total % 100);
     snprintf(buf, n, "%02d:%02d.%02d", mm, ss, cc);
 }
 
-static void render_lap_row(int idx, int64_t lap_us) {
-    // Show lap time + delta from previous lap. Most-recent row in warm amber,
-    // older rows fade to sepia tan so the eye lands on the latest split.
-    char buf[48], t[16];
-    format_mmsscc(t, sizeof(t), lap_us);
-    if (idx > 1) {
-        char d[16];
-        int64_t prev = s_laps_us[idx - 2];
-        int64_t delta = lap_us - prev;
-        format_mmsscc(d, sizeof(d), delta < 0 ? -delta : delta);
-        snprintf(buf, sizeof(buf), "L%-2d  %s   +%s", idx, t, d);
-    } else {
-        snprintf(buf, sizeof(buf), "L%-2d  %s", idx, t);
+// Show the most-recent LAP_ROWS laps on the board; newest brightest.
+static void refresh_laps() {
+    if (!s_lap_row[0]) return;
+    int start = s_lap_count > LAP_ROWS ? s_lap_count - LAP_ROWS : 0;
+    int shown = s_lap_count - start;
+    char t[16], d[16], buf[40];
+    for (int r = 0; r < LAP_ROWS; r++) {
+        if (r >= shown) { lv_obj_add_flag(s_lap_row[r], LV_OBJ_FLAG_HIDDEN); continue; }
+        int idx = start + r;                          // 0-based lap
+        format_mmsscc(t, sizeof(t), s_laps_us[idx]);
+        if (idx > 0) {                                // delta vs the previous lap
+            int64_t delta = s_laps_us[idx] - s_laps_us[idx - 1];
+            format_mmsscc(d, sizeof(d), delta < 0 ? -delta : delta);
+            snprintf(buf, sizeof(buf), "L%-2d %s  %c%s", idx + 1, t, delta < 0 ? '-' : '+', d);
+        } else {
+            snprintf(buf, sizeof(buf), "L%-2d %s", idx + 1, t);
+        }
+        lv_label_set_text(s_lap_row[r], buf);
+        bool latest = (idx == s_lap_count - 1);
+        lv_obj_set_style_text_color(s_lap_row[r],
+            lv_color_hex(latest ? 0xFFE8AA : 0xDAB466), 0);
+        lv_obj_remove_flag(s_lap_row[r], LV_OBJ_FLAG_HIDDEN);
     }
-    lv_obj_t* row = lv_list_add_text(s_lap_list, buf);
-    lv_obj_set_style_text_font(row, &mont_light_20, 0);
-    bool latest = (idx == s_lap_count);
-    lv_obj_set_style_text_color(row,
-        latest ? lv_color_hex(0xE6A050) : lv_color_hex(0x9C8870), 0);
-    lv_obj_set_style_bg_opa(row, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_pad_top(row, 3, 0);
-    lv_obj_set_style_pad_bottom(row, 3, 0);
-    lv_obj_set_style_pad_left(row, 14, 0);
 }
 
-static void refresh_lap_list() {
-    if (!s_lap_list) return;
-    lv_obj_clean(s_lap_list);
-    for (int i = 0; i < s_lap_count; i++) {
-        render_lap_row(i + 1, s_laps_us[i]);
-    }
-    // pin to most-recent lap
-    lv_obj_scroll_to_y(s_lap_list, 99999, LV_ANIM_OFF);
-}
+// Drive every image + label off the current state (the design's state table).
+static void apply_state() {
+    if (!s_badge) return;
+    bool show_right = (s_state != IDLE);
+    bool show_laps  = (s_state != IDLE);
 
-static void update_button_labels() {
-    if (!s_btn_run_lbl) return;
     switch (s_state) {
         case IDLE:
-            lv_label_set_text(s_btn_run_lbl, "START");
-            lv_obj_set_style_bg_color(s_btn_run, lv_color_hex(0x6FAB52), 0);
-            lv_obj_set_style_shadow_color(s_btn_run, lv_color_hex(0x6FAB52), 0);
-            if (s_status_lbl) {
-                lv_label_set_text(s_status_lbl, "READY");
-                lv_obj_set_style_text_color(s_status_lbl, lv_color_hex(0x705840), 0);
-            }
-            lv_label_set_text(s_btn_aux_lbl, "LAP");
-            lv_obj_add_flag(s_btn_aux, LV_OBJ_FLAG_HIDDEN);
+            lv_image_set_src(s_badge, &sw_badge_ready);
+            lv_label_set_text(s_status_lbl, "READY");
+            lv_obj_set_style_text_color(s_status_lbl, lv_color_hex(0xECD28F), 0);
+            lv_image_set_src(s_btn_left, &sw_btn_green);
+            lv_label_set_text(s_btn_left_lbl, "START");
             break;
         case RUNNING:
-            lv_label_set_text(s_btn_run_lbl, "STOP");
-            lv_obj_set_style_bg_color(s_btn_run, lv_color_hex(0xC04030), 0);
-            lv_obj_set_style_shadow_color(s_btn_run, lv_color_hex(0xC04030), 0);
-            if (s_status_lbl) {
-                lv_label_set_text(s_status_lbl, "RUNNING");
-                lv_obj_set_style_text_color(s_status_lbl, lv_color_hex(0x80D070), 0);
-            }
-            lv_label_set_text(s_btn_aux_lbl, "LAP");
-            lv_obj_remove_flag(s_btn_aux, LV_OBJ_FLAG_HIDDEN);
+            lv_image_set_src(s_badge, &sw_badge_running);
+            lv_label_set_text(s_status_lbl, "RUNNING");
+            lv_obj_set_style_text_color(s_status_lbl, lv_color_hex(0x94FF6D), 0);
+            lv_image_set_src(s_btn_left, &sw_btn_red);
+            lv_label_set_text(s_btn_left_lbl, "STOP");
+            lv_image_set_src(s_btn_right, &sw_btn_gold);
+            lv_label_set_text(s_btn_right_lbl, "LAP");
             break;
         case PAUSED:
-            lv_label_set_text(s_btn_run_lbl, "RESUME");
-            lv_obj_set_style_bg_color(s_btn_run, lv_color_hex(0x6FAB52), 0);
-            lv_obj_set_style_shadow_color(s_btn_run, lv_color_hex(0x6FAB52), 0);
-            if (s_status_lbl) {
-                lv_label_set_text(s_status_lbl, "PAUSED");
-                lv_obj_set_style_text_color(s_status_lbl, lv_color_hex(0xE6A050), 0);
-            }
-            lv_label_set_text(s_btn_aux_lbl, "RESET");
-            lv_obj_remove_flag(s_btn_aux, LV_OBJ_FLAG_HIDDEN);
+            lv_image_set_src(s_badge, &sw_badge_paused);
+            lv_label_set_text(s_status_lbl, "PAUSED");
+            lv_obj_set_style_text_color(s_status_lbl, lv_color_hex(0xFFB95B), 0);
+            lv_image_set_src(s_btn_left, &sw_btn_green);
+            lv_label_set_text(s_btn_left_lbl, "RESUME");
+            lv_image_set_src(s_btn_right, &sw_btn_gold);
+            lv_label_set_text(s_btn_right_lbl, "RESET");
             break;
     }
+    if (show_right) { lv_obj_remove_flag(s_btn_right, LV_OBJ_FLAG_HIDDEN); }
+    else            { lv_obj_add_flag   (s_btn_right, LV_OBJ_FLAG_HIDDEN); }
+    if (show_laps)  { lv_obj_remove_flag(s_lap_panel, LV_OBJ_FLAG_HIDDEN); }
+    else            { lv_obj_add_flag   (s_lap_panel, LV_OBJ_FLAG_HIDDEN); }
+    refresh_laps();
 }
 
 void press_run() {
@@ -135,133 +126,108 @@ void press_run() {
             s_state = PAUSED;
             break;
     }
-    update_button_labels();
+    apply_state();
 }
 
 void press_aux() {
     if (s_state == RUNNING) {
-        // lap snapshot — does NOT pause the timer
-        if (s_lap_count < MAX_LAPS) {
+        if (s_lap_count < MAX_LAPS) {       // lap snapshot — does NOT pause
             s_laps_us[s_lap_count++] = elapsed_us();
-            if (s_lap_list) {
-                render_lap_row(s_lap_count, s_laps_us[s_lap_count - 1]);
-                lv_obj_scroll_to_y(s_lap_list, 99999, LV_ANIM_OFF);
-            }
+            refresh_laps();
         }
     } else if (s_state == PAUSED) {
-        // full reset back to zero
-        s_accumulated_us = 0;
+        s_accumulated_us = 0;               // full reset to zero
         s_lap_count = 0;
         s_state = IDLE;
-        refresh_lap_list();
-        update_button_labels();
+        apply_state();
+        if (s_time_lbl) lv_label_set_text(s_time_lbl, "00:00.00");
     }
 }
 
 static void on_run_clicked(lv_event_t*) { press_run(); }
 static void on_aux_clicked(lv_event_t*) { press_aux(); }
 
+// Helper: a centred label that sits on top of an image button.
+static lv_obj_t* btn_label(lv_obj_t* img, uint32_t color) {
+    lv_obj_t* l = lv_label_create(img);
+    lv_obj_set_style_text_font(l, &mont_light_24, 0);
+    lv_obj_set_style_text_color(l, lv_color_hex(color), 0);
+    lv_obj_center(l);
+    return l;
+}
+
 void enter(lv_obj_t* parent) {
     s_root = parent;
-    // Warm dark sepia background ties the stopwatch to the watch's "old leather
-    // & brass" palette — same family as the mechanical face.
-    lv_obj_set_style_bg_color(s_root, lv_color_hex(0x100A05), 0);
+    lv_obj_set_style_bg_color(s_root, lv_color_black(), 0);
     lv_obj_set_style_bg_opa(s_root, LV_OPA_COVER, 0);
+    lv_obj_remove_flag(s_root, LV_OBJ_FLAG_SCROLLABLE);
 
-    // Status badge above the hero number: READY / RUNNING / PAUSED with
-    // colour cue so kid sees state at a glance.
-    s_status_lbl = lv_label_create(s_root);
-    lv_obj_set_style_text_font(s_status_lbl, &mont_light_14, 0);
-    lv_obj_set_style_text_color(s_status_lbl, lv_color_hex(0x705840), 0);
-    lv_label_set_text(s_status_lbl, "READY");
-    lv_obj_align(s_status_lbl, LV_ALIGN_CENTER, 0, -170);
+    // Layer 0 — full-screen mechanical dial.
+    lv_obj_t* bg = lv_image_create(s_root);
+    lv_image_set_src(bg, &sw_bg);
+    lv_obj_set_pos(bg, 0, 0);
 
-    // Hero "screen well" — slightly lifted rounded slab behind the digits so
-    // the time reads like a watch crystal, not bare text on void.
-    s_hero_pill = lv_obj_create(s_root);
-    lv_obj_remove_style_all(s_hero_pill);
-    lv_obj_set_size(s_hero_pill, 380, 100);
-    lv_obj_align(s_hero_pill, LV_ALIGN_CENTER, 0, -115);
-    lv_obj_set_style_bg_color(s_hero_pill, lv_color_hex(0x1F1308), 0);
-    lv_obj_set_style_bg_opa(s_hero_pill, LV_OPA_COVER, 0);
-    lv_obj_set_style_radius(s_hero_pill, 18, 0);
-    lv_obj_set_style_border_color(s_hero_pill, lv_color_hex(0x3A2818), 0);
-    lv_obj_set_style_border_width(s_hero_pill, 1, 0);
-    lv_obj_set_style_shadow_width(s_hero_pill, 18, 0);
-    lv_obj_set_style_shadow_color(s_hero_pill, lv_color_hex(0xE6A050), 0);
-    lv_obj_set_style_shadow_opa(s_hero_pill, 32, 0);   // ~12%
-    lv_obj_set_style_shadow_spread(s_hero_pill, 0, 0);
-    lv_obj_remove_flag(s_hero_pill, LV_OBJ_FLAG_SCROLLABLE);
+    // Status pill + word.
+    s_badge = lv_image_create(s_root);
+    lv_obj_set_pos(s_badge, 174, 42);
+    s_status_lbl = lv_label_create(s_badge);
+    lv_obj_set_style_text_font(s_status_lbl, &mont_light_20, 0);
+    lv_obj_align(s_status_lbl, LV_ALIGN_CENTER, 10, 0);   // nudge right of the LED
 
-    s_time_lbl = lv_label_create(s_root);
-    lv_obj_set_style_text_font(s_time_lbl, &mont_light_72_digits, 0);
-    lv_obj_set_style_text_color(s_time_lbl, lv_color_hex(0xF5E8D0), 0);
+    // Glass time crystal + big digits.
+    lv_obj_t* win = lv_image_create(s_root);
+    lv_image_set_src(win, &sw_time_window);
+    lv_obj_set_pos(win, 49, 73);
+    s_time_lbl = lv_label_create(win);
+    lv_obj_set_style_text_font(s_time_lbl, &mont_light_48_digits, 0);
+    lv_obj_set_style_text_color(s_time_lbl, lv_color_hex(0xFFF9E2), 0);
     lv_label_set_text(s_time_lbl, "00:00.00");
-    lv_obj_align(s_time_lbl, LV_ALIGN_CENTER, 0, -115);
+    lv_obj_center(s_time_lbl);
 
-    // Control buttons — rounded chunky, glow-shadow tinted to match the
-    // bg colour so they pop without looking like LVGL stock blue.
-    s_btn_run = lv_button_create(s_root);
-    lv_obj_set_size(s_btn_run, 140, 56);
-    lv_obj_align(s_btn_run, LV_ALIGN_CENTER, -82, -10);
-    lv_obj_set_style_radius(s_btn_run, 28, 0);
-    lv_obj_set_style_bg_opa(s_btn_run, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_width(s_btn_run, 0, 0);
-    lv_obj_set_style_shadow_width(s_btn_run, 18, 0);
-    lv_obj_set_style_shadow_opa(s_btn_run, 80, 0);
-    lv_obj_set_style_shadow_spread(s_btn_run, 0, 0);
-    lv_obj_add_event_cb(s_btn_run, on_run_clicked, LV_EVENT_CLICKED, nullptr);
-    s_btn_run_lbl = lv_label_create(s_btn_run);
-    lv_obj_set_style_text_font(s_btn_run_lbl, &mont_light_24, 0);
-    lv_obj_set_style_text_color(s_btn_run_lbl, lv_color_hex(0x0A0805), 0);
-    lv_obj_center(s_btn_run_lbl);
+    // Left control (START/STOP/RESUME) — clickable image.
+    s_btn_left = lv_image_create(s_root);
+    lv_obj_set_pos(s_btn_left, 73, 190);
+    lv_obj_add_flag(s_btn_left, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(s_btn_left, on_run_clicked, LV_EVENT_CLICKED, nullptr);
+    s_btn_left_lbl = btn_label(s_btn_left, 0xFFF7DA);
 
-    s_btn_aux = lv_button_create(s_root);
-    lv_obj_set_size(s_btn_aux, 140, 56);
-    lv_obj_align(s_btn_aux, LV_ALIGN_CENTER, 82, -10);
-    lv_obj_set_style_radius(s_btn_aux, 28, 0);
-    lv_obj_set_style_bg_color(s_btn_aux, lv_color_hex(0x2A1B0E), 0);
-    lv_obj_set_style_bg_opa(s_btn_aux, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_width(s_btn_aux, 1, 0);
-    lv_obj_set_style_border_color(s_btn_aux, lv_color_hex(0x6A4A2C), 0);
-    lv_obj_add_event_cb(s_btn_aux, on_aux_clicked, LV_EVENT_CLICKED, nullptr);
-    s_btn_aux_lbl = lv_label_create(s_btn_aux);
-    lv_obj_set_style_text_font(s_btn_aux_lbl, &mont_light_24, 0);
-    lv_obj_set_style_text_color(s_btn_aux_lbl, lv_color_hex(0xE6A050), 0);
-    lv_obj_center(s_btn_aux_lbl);
+    // Right control (LAP/RESET).
+    s_btn_right = lv_image_create(s_root);
+    lv_obj_set_pos(s_btn_right, 243, 190);
+    lv_obj_add_flag(s_btn_right, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(s_btn_right, on_aux_clicked, LV_EVENT_CLICKED, nullptr);
+    s_btn_right_lbl = btn_label(s_btn_right, 0xFFF7DA);
 
-    // Lap list at the bottom — transparent so it sits on the sepia bg, no
-    // visible scrollbar; latest row gets the warm amber from render_lap_row.
-    s_lap_list = lv_list_create(s_root);
-    lv_obj_set_size(s_lap_list, 320, 130);
-    lv_obj_align(s_lap_list, LV_ALIGN_CENTER, 0, 110);
-    lv_obj_set_style_bg_opa(s_lap_list, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(s_lap_list, 0, 0);
-    lv_obj_set_style_pad_all(s_lap_list, 0, 0);
-    lv_obj_set_scrollbar_mode(s_lap_list, LV_SCROLLBAR_MODE_OFF);
+    // Lap board + 4 rows.
+    s_lap_panel = lv_image_create(s_root);
+    lv_image_set_src(s_lap_panel, &sw_lap_panel);
+    lv_obj_set_pos(s_lap_panel, 61, 280);
+    for (int r = 0; r < LAP_ROWS; r++) {
+        s_lap_row[r] = lv_label_create(s_lap_panel);
+        lv_obj_set_style_text_font(s_lap_row[r], &mont_light_20, 0);
+        lv_obj_set_style_text_color(s_lap_row[r], lv_color_hex(0xDAB466), 0);
+        lv_obj_set_pos(s_lap_row[r], 30, 16 + r * 27);
+        lv_label_set_text(s_lap_row[r], "");
+    }
 
-    update_button_labels();
-    refresh_lap_list();
+    apply_state();
+    // restore the live time on re-enter (timer may have run in the background)
+    char buf[16]; format_mmsscc(buf, sizeof(buf), elapsed_us());
+    lv_label_set_text(s_time_lbl, buf);
 }
 
 void leave() {
-    if (s_root) {
-        lv_obj_clean(s_root);
-        s_root = nullptr;
-    }
-    s_time_lbl    = nullptr;
-    s_hero_pill   = nullptr;
-    s_status_lbl  = nullptr;
-    s_btn_run     = s_btn_run_lbl = nullptr;
-    s_btn_aux     = s_btn_aux_lbl = nullptr;
-    s_lap_list    = nullptr;
-    // s_state, s_run_started_us, s_accumulated_us, s_laps_us stay — the
-    // stopwatch keeps running in the background after the user leaves.
+    if (s_root) { lv_obj_clean(s_root); s_root = nullptr; }
+    s_badge = s_status_lbl = s_time_lbl = nullptr;
+    s_btn_left = s_btn_left_lbl = s_btn_right = s_btn_right_lbl = nullptr;
+    s_lap_panel = nullptr;
+    for (int r = 0; r < LAP_ROWS; r++) s_lap_row[r] = nullptr;
+    // s_state / timers / laps persist — the stopwatch keeps running in background.
 }
 
 void tick() {
     if (!s_time_lbl) return;
-    if (s_state != RUNNING) return;      // paused/idle don't need redraws
+    if (s_state != RUNNING) return;
     char buf[16];
     format_mmsscc(buf, sizeof(buf), elapsed_us());
     lv_label_set_text(s_time_lbl, buf);
