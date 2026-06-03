@@ -402,6 +402,50 @@ async function callGemini(env, prompt) {
     return JSON.parse(jsonText);
 }
 
+// ── Daily note from PAPA (roadmap #5) ───────────────────────────────────────
+// Each morning at QUOTE_HOUR in Stanley's timezone, ask the LLM for a short warm
+// note and PUBLISH it RETAINED to from-dad. Retain = the watch picks it up
+// whenever it next connects, even if it was asleep/offline at 7am. (Trade-off:
+// the watch re-receives the retained note on every MQTT reconnect, replaying its
+// chime — acceptable for now; dedupe on the watch later if it gets annoying.)
+const QUOTE_TZ   = "America/Los_Angeles";   // Stanley's time
+const QUOTE_HOUR = 7;                        // 07:00 local
+
+async function generateDailyQuote(env) {
+    const today = new Intl.DateTimeFormat("en-US", {
+        timeZone: QUOTE_TZ, weekday: "long", month: "long", day: "numeric",
+    }).format(new Date());
+    const prompt =
+`Write a short morning note from a father (Papa) to his 10-year-old son Stanley.
+Papa works far away in China; Stanley lives in California. They miss each other.
+Today is ${today}. Make it warm and encouraging — courage, kindness, curiosity,
+or simply being loved. Plain English, one or two sentences, no quotation marks,
+no emoji, no markdown, under 160 characters. End with "— Papa".`;
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/`
+              + `gemini-2.5-flash:generateContent?key=${env.GEMINI_API_KEY}`;
+    const resp = await fetch(url, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+            contents: [{ role: "user", parts: [{ text: prompt }] }],
+            generationConfig: { temperature: 0.9 },   // variety day to day
+        }),
+    });
+    if (!resp.ok) throw new Error(`gemini ${resp.status}: ${(await resp.text()).slice(0, 200)}`);
+    const data = await resp.json();
+    const text = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+    if (!text) throw new Error("gemini: empty quote");
+    return text.replace(/\s+/g, " ").slice(0, 220);   // watch buffer is 240
+}
+
+async function sendDailyQuote(env) {
+    const text  = await generateDailyQuote(env);
+    const topic = `stopwatch/${env.PAIR_ID}/from-dad`;
+    await publishMqtt(env.MQTT_BROKER_WSS, topic,
+        JSON.stringify({ cmd: "quote", text }), { retain: true });
+    console.log("[daily-quote] sent:", text);
+}
+
 // ISO 8601 string → unix epoch seconds, or null if blank/unparseable.
 function parseIsoToEpoch(s) {
     if (!s) return null;
@@ -1137,6 +1181,18 @@ export default {
                 { headers: { "content-type": "application/json" } });
         }
 
+        // Manual daily-note trigger — generates + publishes a PAPA note right
+        // now (same as the 7am cron), so we can test end-to-end on demand.
+        if (request.method === "GET" &&
+            url.pathname === `/quote/${env.INGEST_TOKEN}/run`) {
+            const text = await generateDailyQuote(env);
+            const topic = `stopwatch/${env.PAIR_ID}/from-dad`;
+            await publishMqtt(env.MQTT_BROKER_WSS, topic,
+                JSON.stringify({ cmd: "quote", text }), { retain: true });
+            return new Response(JSON.stringify({ ok: true, text }, null, 2),
+                { headers: { "content-type": "application/json" } });
+        }
+
         // Manual Telegram fan-out sweep — pushes all events with
         // pushed_telegram=0. Useful after seeding a new subscription or
         // recovering from a Telegram outage.
@@ -1230,6 +1286,22 @@ export default {
     async scheduled(event, env, ctx) {
         ctx.waitUntil(getRelay(env).fetch("https://do/poke").catch((e) =>
             console.error("[cron] poke failed:", e.message)));
+
+        // Daily note from PAPA — fire once, at QUOTE_HOUR:00 in Stanley's TZ.
+        // (No persistence: a skipped cron minute = missed day, fine for a gift.
+        // The retained publish covers the watch being offline at send time.)
+        if (env.GEMINI_API_KEY && env.MQTT_BROKER_WSS && env.PAIR_ID) {
+            const parts = new Intl.DateTimeFormat("en-US", {
+                timeZone: QUOTE_TZ, hour: "2-digit", minute: "2-digit", hour12: false,
+            }).formatToParts(new Date(event.scheduledTime));
+            const h = +parts.find((p) => p.type === "hour").value;
+            const m = +parts.find((p) => p.type === "minute").value;
+            if (h === QUOTE_HOUR && m === 0) {
+                ctx.waitUntil(sendDailyQuote(env).catch((e) =>
+                    console.error("[cron] daily-quote failed:", e.message)));
+            }
+        }
+
         if (env.GEMINI_API_KEY && env.EVENTS_DB) {
             ctx.waitUntil(extractAllUnprocessed(env).catch((e) =>
                 console.error("[cron] extract sweep failed:", e.message)));
