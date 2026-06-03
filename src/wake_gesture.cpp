@@ -8,8 +8,8 @@ namespace wake_gesture {
 
 static constexpr uint32_t SLEEP_AFTER_MS    = 20000;
 static constexpr uint32_t SAMPLE_PERIOD_MS  = 100;     // 10Hz IMU check
-static constexpr float    WAKE_Z_HIGH       = 0.55f;   // watch face tilted up
-static constexpr float    WAKE_Z_LOW        = 0.30f;   // watch face sideways/down
+static constexpr float    WAKE_Z_HIGH       = 0.55f;   // face toward user (raised)
+static constexpr float    WAKE_Z_LOW        = 0.40f;   // face sideways/down (arm hanging)
 // L1: 80MHz keeps APB at 80MHz, so I2S/UART/touch/WiFi are untouched — the
 // lowest CPU step with zero peripheral side effects. WiFi also needs ≥80MHz.
 static constexpr uint32_t CPU_AWAKE_MHZ     = 240;
@@ -18,11 +18,12 @@ static constexpr uint32_t CPU_SLEEP_MHZ     = 80;
 static bool     s_sleeping        = false;
 static uint32_t s_last_activity_ms = 0;
 static uint32_t s_last_sample_ms   = 0;
-static float    s_last_z          = 0;
+static bool     s_saw_low         = false;   // az dipped low since we fell asleep
 
 static void wake() {
     if (!s_sleeping) return;
     s_sleeping = false;
+    s_saw_low  = false;                                 // re-arm for next cycle
     setCpuFrequencyMhz(CPU_AWAKE_MHZ);                  // L1: full speed
     M5.Display.wakeup();                                // L3: panel on
     M5.Display.setBrightness(app_settings::brightness());
@@ -58,13 +59,15 @@ void update() {
         float ax, ay, az;
         M5.Imu.getAccel(&ax, &ay, &az);
 
-        // Wrist-raise: z crossed from "watch is down/sideways" (last sample
-        // < LOW) to "watch is facing user" (this sample > HIGH). That low→
-        // high transition is what tells us the kid just raised his wrist.
-        if (s_sleeping && s_last_z < WAKE_Z_LOW && az > WAKE_Z_HIGH) {
-            notifyActivity();
+        // Wrist-raise: az dipped LOW (arm hanging, face sideways) and has now
+        // risen past HIGH (face toward user). A real raise takes a few 100ms
+        // samples to cross the dead band, so we LATCH the low state instead of
+        // requiring low→high on adjacent samples — the old way missed every
+        // raise that lingered mid-band for more than one sample.
+        if (s_sleeping) {
+            if (az < WAKE_Z_LOW)               s_saw_low = true;
+            if (s_saw_low && az > WAKE_Z_HIGH)  notifyActivity();
         }
-        s_last_z = az;
     }
 
     if (!s_sleeping && now - s_last_activity_ms > SLEEP_AFTER_MS) {
