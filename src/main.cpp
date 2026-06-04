@@ -693,9 +693,17 @@ void loop() {
     // so the path to time is two taps from cold boot.
     static bool s_boot_done = false;
     if (!s_boot_done) {
-        // The boot ceremony already played pre-LVGL; land on the launcher.
+        // The boot ceremony faded out to black; bring the launcher up the same
+        // way — draw it while still dark, then ramp brightness up.
+        M5.Display.setBrightness(0);
         app_runtime::switch_to(g_apps[0]);   // [0] = APP_LAUNCHER
         heart_overlay::create();
+        lvgl_port::tick();                   // render the launcher while black
+        uint8_t target = app_settings::brightness();
+        for (int s = 1; s <= 24; s++) {
+            M5.Display.setBrightness((uint8_t)(target * s / 24));
+            delay(15);
+        }
         s_boot_done = true;
     }
     heart_overlay::update();

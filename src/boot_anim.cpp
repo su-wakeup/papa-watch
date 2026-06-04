@@ -50,6 +50,16 @@ void play() {
     M5.Display.drawString(line, tx, ty);
 
     delay(900);                              // hold the inscribed coin a beat
+
+    // Fade the coin out to black (pure brightness ramp, mirrors the fade-in) so
+    // we don't hard-cut to the launcher. main() brings the launcher up the same
+    // way once it's drawn.
+    int b0 = M5.Display.getBrightness();
+    for (int s = 48; s >= 0; s--) {          // ~720ms — gentle fade out
+        M5.Display.setBrightness(b0 * s / 48);
+        delay(15);
+    }
+    M5.Display.fillScreen(TFT_BLACK);
 }
 
 }  // namespace boot_anim
