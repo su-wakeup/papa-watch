@@ -35,6 +35,7 @@
 #include "heart_relay.h"
 #include "events_store.h"
 #include "papa_quote.h"
+#include "voice_play.h"
 #include "ota.h"
 #include <ArduinoJson.h>
 #include "audio/cow_moo.h"
@@ -525,6 +526,20 @@ void setup() {
             return;
         }
 
+        // Voice clip from PAPA: {"cmd":"voice","url":"http://.../clip.pcm"}
+        // (raw 16kHz mono int16 PCM; Opus→PCM is done server-side).
+        if (cmd && strcmp(cmd, "voice") == 0) {
+            const char* url = doc["url"] | "";
+            if (url[0]) {
+                voice_play::request(url);
+                wake_gesture::notifyActivity();
+                hapticHeartbeat();
+                face_lcd::showAlert("PAPA VOICE", 0xC8A050, 2500);
+                Serial.printf("[voice] queued %s\n", url);
+            }
+            return;
+        }
+
         // Heart payload: {"t":..,"from":"..","note":".."}
         const char* note = doc["note"]  | "DAD HEART";
         const char* from = doc["from"]  | "";
@@ -636,6 +651,7 @@ void loop() {
     steps::update();
     uint32_t t4 = millis();
     wake_gesture::update();
+    voice_play::tick();          // download+play a queued PAPA voice clip
 
     if (loop_dt > 150) {
         Serial.printf("  ↳ lvgl=%ums  mqtt=%ums  steps=%ums\n",
