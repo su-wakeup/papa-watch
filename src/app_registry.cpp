@@ -51,6 +51,7 @@ static void schedule_tick()               { app_schedule::tick(); }
 static void papachat_enter(lv_obj_t* p)  { app_papachat::enter(p); }
 static void papachat_leave()              { app_papachat::leave(); }
 static void papachat_tick()               { app_papachat::tick(); }
+static void papachat_btn_a()              { app_papachat::onButtonA(); }   // record to PAPA
 
 // Stub trampolines for apps whose UIs aren't built yet. Each just forwards
 // to app_stub::enter with its own name + Phosphor glyph so a tap at least
@@ -82,7 +83,7 @@ static const App APP_WATCH     = { "WATCH",     "\xEE\x93\xA6", watch_enter,    
 static const App APP_STOPWATCH = { "STOPWATCH", "\xEE\x92\x92", stopwatch_enter, stopwatch_leave, stopwatch_tick, stopwatch_btn_a, stopwatch_btn_b, &icon_stopwatch, &icon_stopwatch_mono };
 static const App APP_SCHEDULE  = { "SCHEDULE",  "\xEE\x84\x8A", schedule_enter,  schedule_leave,  schedule_tick,  nullptr,         nullptr,         &icon_schedule,  &icon_schedule_mono  };
 static const App APP_AICHAT    = { "AI CHAT",   "\xEE\x9D\xA2", aichat_enter,    aichat_leave,    aichat_tick,    nullptr,         nullptr,         &icon_aichat,    &icon_aichat_mono    };
-static const App APP_PAPACHAT  = { "PAPA",      "\xEE\x85\xAC", papachat_enter,  papachat_leave,  papachat_tick,  nullptr,         nullptr,         &icon_papa,      &icon_papa_mono      };
+static const App APP_PAPACHAT  = { "PAPA",      "\xEE\x85\xAC", papachat_enter,  papachat_leave,  papachat_tick,  papachat_btn_a,  nullptr,         &icon_papa,      &icon_papa_mono      };
 static const App APP_COMPASS   = { "SUNDIAL",   "\xEE\x87\x88", compass_enter,   compass_leave,   compass_tick,   nullptr,         nullptr,         &icon_compass,   &icon_compass_mono   };  // no A/B; touch only
 static const App APP_SETTINGS  = { "SETTINGS",  "\xEE\x89\xB2", settings_enter,  settings_leave,  settings_tick,  settings_btn_a,  settings_btn_b,  &icon_settings,  &icon_settings_mono  };
 

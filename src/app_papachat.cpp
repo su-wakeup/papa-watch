@@ -1,5 +1,6 @@
 #include "app_papachat.h"
 #include "papa_quote.h"
+#include "voice_rec.h"
 #include <lvgl.h>
 #include <string.h>
 
@@ -9,6 +10,7 @@ namespace app_papachat {
 
 static lv_obj_t* s_root  = nullptr;
 static lv_obj_t* s_quote = nullptr;
+static lv_obj_t* s_rec_lbl = nullptr;     // record state ("Hold A to talk" / "REC 3s" / "Sent OK")
 static char      s_shown[256] = "\x01";   // force first refresh
 
 static const char* PLACEHOLDER =
@@ -44,6 +46,12 @@ void enter(lv_obj_t* parent) {
     s_shown[0] = '\x01';                                               // force refresh
     refresh();
 
+    s_rec_lbl = lv_label_create(s_root);
+    lv_obj_set_style_text_font(s_rec_lbl, &lv_font_montserrat_18, 0);
+    lv_obj_set_style_text_color(s_rec_lbl, lv_color_hex(0x80C060), 0);
+    lv_label_set_text(s_rec_lbl, "BtnA: record 5s to PAPA");
+    lv_obj_align(s_rec_lbl, LV_ALIGN_BOTTOM_MID, 0, -110);
+
     lv_obj_t* hint = lv_label_create(s_root);
     lv_obj_set_style_text_font(hint, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(hint, lv_color_hex(0x6E4E26), 0);
@@ -52,11 +60,21 @@ void enter(lv_obj_t* parent) {
 }
 
 void leave() {
-    if (s_root) { lv_obj_clean(s_root); s_root = nullptr; s_quote = nullptr; }
+    if (s_root) { lv_obj_clean(s_root); s_root = nullptr; s_quote = nullptr; s_rec_lbl = nullptr; }
 }
 
 void tick() {
     if (s_quote) refresh();
+    voice_rec::tick();
+    if (s_rec_lbl) {
+        const char* st = voice_rec::statusText();   // shows REC.. / Uploading.. / Sent OK
+        if (st[0]) lv_label_set_text(s_rec_lbl, st);
+    }
+}
+
+void onButtonA() {
+    voice_rec::start();
+    if (s_rec_lbl) lv_label_set_text(s_rec_lbl, voice_rec::statusText());
 }
 
 }  // namespace app_papachat

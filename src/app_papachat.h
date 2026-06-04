@@ -11,5 +11,6 @@ namespace app_papachat {
 void enter(lv_obj_t* parent);
 void leave();
 void tick();
+void onButtonA();   // record a voice message to PAPA
 
 }  // namespace app_papachat
