@@ -1,5 +1,6 @@
 #include "app_stopwatch.h"
 #include "sw_ui/sw_assets.h"
+#include "fs_image.h"
 #include <lvgl.h>
 #include <esp_timer.h>
 #include <stdio.h>
@@ -32,6 +33,7 @@ static lv_obj_t* s_btn_right   = nullptr;   // LAP / RESET (image)
 static lv_obj_t* s_btn_right_lbl=nullptr;
 static lv_obj_t* s_lap_panel   = nullptr;   // lap board image
 static lv_obj_t* s_lap_row[LAP_ROWS] = {};  // up to 4 most-recent laps
+static lv_image_dsc_t* s_bg_dsc = nullptr;  // dial bg loaded from LittleFS → PSRAM
 
 static int64_t elapsed_us() {
     if (s_state == RUNNING) {
@@ -162,9 +164,11 @@ void enter(lv_obj_t* parent) {
     lv_obj_set_style_bg_opa(s_root, LV_OPA_COVER, 0);
     lv_obj_remove_flag(s_root, LV_OBJ_FLAG_SCROLLABLE);
 
-    // Layer 0 — full-screen mechanical dial.
+    // Layer 0 — full-screen mechanical dial, streamed from LittleFS into PSRAM
+    // (kept out of the app flash partition).
+    s_bg_dsc = fs_image::load_rgb565("/ui/sw_bg.565", 466, 466);
     lv_obj_t* bg = lv_image_create(s_root);
-    lv_image_set_src(bg, &sw_bg);
+    if (s_bg_dsc) lv_image_set_src(bg, s_bg_dsc);
     lv_obj_set_pos(bg, 0, 0);
 
     // Status pill + word.
@@ -218,6 +222,7 @@ void enter(lv_obj_t* parent) {
 
 void leave() {
     if (s_root) { lv_obj_clean(s_root); s_root = nullptr; }
+    fs_image::free(s_bg_dsc); s_bg_dsc = nullptr;   // release the PSRAM bg
     s_badge = s_status_lbl = s_time_lbl = nullptr;
     s_btn_left = s_btn_left_lbl = s_btn_right = s_btn_right_lbl = nullptr;
     s_lap_panel = nullptr;

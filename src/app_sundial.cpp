@@ -1,5 +1,6 @@
 #include "app_sundial.h"
 #include "sd_ui/sd_assets.h"
+#include "fs_image.h"
 #include "sun.h"
 #include "geo.h"
 #include <lvgl.h>
@@ -19,6 +20,7 @@ static lv_obj_t* s_root        = nullptr;
 static lv_obj_t* s_shadow      = nullptr;   // rotates by sun azimuth
 static lv_obj_t* s_bubble      = nullptr;   // moves with tilt
 static lv_obj_t* s_status_lbl  = nullptr;   // on the bottom ribbon plate
+static lv_image_dsc_t* s_bg_dsc = nullptr;  // dial bg loaded from LittleFS → PSRAM
 
 static constexpr int   CX = 233, CY = 233;          // screen centre
 static constexpr int   SHADOW_PIVOT = 17;           // line's rotation axis (local)
@@ -49,8 +51,9 @@ void enter(lv_obj_t* parent) {
 
     // Layer 1 — full static brass dial (dial + letters + ring + gnomon + ribbon
     // plate + glass reflection, all pre-composited).
+    s_bg_dsc = fs_image::load_rgb565("/ui/sd_bg.565", 466, 466);   // from LittleFS → PSRAM
     lv_obj_t* bg = lv_image_create(s_root);
-    lv_image_set_src(bg, &sd_bg);
+    if (s_bg_dsc) lv_image_set_src(bg, s_bg_dsc);
     lv_obj_set_pos(bg, 0, 0);
 
     // Layer 5 — solar shadow line; pivot at its inner axis aligned to centre.
@@ -89,6 +92,7 @@ void enter(lv_obj_t* parent) {
 
 void leave() {
     if (s_root) { lv_obj_clean(s_root); s_root = nullptr; }
+    fs_image::free(s_bg_dsc); s_bg_dsc = nullptr;   // release the PSRAM bg
     s_shadow = s_bubble = s_status_lbl = nullptr;
 }
 

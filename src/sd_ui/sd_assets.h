@@ -10,7 +10,6 @@
 extern "C" {
 #endif
 
-extern const lv_image_dsc_t sd_bg;          // 466x466 composited static base
 extern const lv_image_dsc_t sd_shadow;      // 214x34 solar shadow line (pivot 17,17)
 extern const lv_image_dsc_t sd_bubble_base; // 132x132 level lens liquid
 extern const lv_image_dsc_t sd_bubble;      // 56x56 air bubble (moves)

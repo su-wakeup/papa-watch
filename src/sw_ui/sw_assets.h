@@ -12,7 +12,6 @@
 extern "C" {
 #endif
 
-extern const lv_image_dsc_t sw_bg;
 extern const lv_image_dsc_t sw_time_window;
 extern const lv_image_dsc_t sw_btn_green;     // START / RESUME
 extern const lv_image_dsc_t sw_btn_red;       // STOP
