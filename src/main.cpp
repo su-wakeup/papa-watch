@@ -405,6 +405,7 @@ void setup() {
     cfg.internal_imu  = true;
     cfg.internal_rtc  = true;
     cfg.internal_spk  = true;
+    cfg.internal_mic  = true;     // shared ES8311 codec; PAPA app switches spk↔mic
     M5.begin(cfg);
 
     Serial.begin(115200);
