@@ -616,12 +616,19 @@ void setup() {
     steps::init();
     alarms::load();
     wake_gesture::init();
-    // Prime the geo cache once at boot, when we've just confirmed WiFi.
-    // Avoids the ~3s sync HTTP call running inside app_sundial::enter()
-    // (which was blocking LVGL → mech-face second hand jumping forward).
+    // Re-detect location by IP on every boot so travel is picked up
+    // automatically — the 24h getLocation cache would otherwise pin us to the
+    // last city (e.g. the Shenzhen bench long after the watch is in Los Gatos).
+    // A manual preset override still wins; offline falls back to the cache.
+    // (Priming here also keeps the ~3s HTTP call out of app_sundial::enter(),
+    //  which was blocking LVGL → mech-face second hand jumping forward.)
     {
         geo::Location loc;
-        if (geo::getLocation(&loc)) {
+        bool ok = (wifi_setup::isConnected() && geo::getOverrideIdx() == 0)
+                      ? geo::refreshLocation(&loc)   // force a fresh IP lookup
+                      : false;
+        if (!ok) ok = geo::getLocation(&loc);        // offline/override → cache
+        if (ok) {
             Serial.printf("[geo] %s  %.3f, %.3f\n", loc.city, loc.lat, loc.lon);
         } else {
             Serial.println("[geo] prime failed; sundial will try again later");
