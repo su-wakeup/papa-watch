@@ -1,7 +1,8 @@
 // wifi_setup — first-boot Wi-Fi onboarding for StopWatch
 //   1) tryAutoConnect()         attempt last-saved credentials (NVS)
 //   2) runInteractiveConfig()   scan → SSID list → mini QWERTY (+ dual-btn fallback)
-//                                → save NVS on success → return when connected
+//                                → save NVS on success. Returns on connect OR when
+//                                the user taps "Skip" (watch then runs offline).
 // Visual layer is placeholder-grade; polish is a separate UI/UX track (see memory).
 
 #pragma once

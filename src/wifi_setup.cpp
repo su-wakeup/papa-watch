@@ -112,7 +112,8 @@ static std::vector<ScannedNet> scanNets() {
 }
 
 // ── SSID list view ───────────────────────────────────────
-// Returns index into `nets`, or -1 if user wants to rescan (long-press anywhere).
+// Returns index into `nets`, -1 to rescan (hold), or -2 to skip → run offline.
+static constexpr int SKIP_X = 124, SKIP_Y = 388, SKIP_W = 220, SKIP_H = 46;
 static int pickSSID(const std::vector<ScannedNet>& nets) {
     int scroll = 0;
     const int ITEM_H = 46;
@@ -158,11 +159,18 @@ static int pickSSID(const std::vector<ScannedNet>& nets) {
             g_canvas.fillTriangle(CX-8, LIST_Y + VISIBLE*ITEM_H + 4,
                                   CX+8, LIST_Y + VISIBLE*ITEM_H + 4,
                                   CX,   LIST_Y + VISIBLE*ITEM_H + 14, C_DIM);
+        // skip → run offline (a watch must work without Wi-Fi)
+        g_canvas.fillRoundRect(SKIP_X, SKIP_Y, SKIP_W, SKIP_H, 10, C_KEY);
+        g_canvas.setTextDatum(middle_center);
+        g_canvas.setTextColor(C_FG, C_KEY);
+        g_canvas.setFont(&fonts::FreeSans12pt7b);
+        g_canvas.drawString("Skip - use offline", SKIP_X + SKIP_W/2, SKIP_Y + SKIP_H/2);
+
         // bottom hint
         g_canvas.setTextDatum(bottom_center);
         g_canvas.setTextColor(C_DIM, C_BG);
         g_canvas.setFont(&fonts::Font0);
-        g_canvas.drawString("hold to rescan", CX, H - 14);
+        g_canvas.drawString("hold to rescan", CX, H - 10);
 
         g_canvas.pushSprite(&M5.Display, 0, 0);
     };
@@ -182,6 +190,10 @@ static int pickSSID(const std::vector<ScannedNet>& nets) {
         if (t.wasReleased()) {
             int dy = t.y - touch_start_y;
             if (abs(dy) < 20) {
+                if (t.x >= SKIP_X && t.x < SKIP_X + SKIP_W &&
+                    t.y >= SKIP_Y && t.y < SKIP_Y + SKIP_H) {
+                    return -2;   // skip → run offline
+                }
                 int idx = (t.y - LIST_Y) / ITEM_H;
                 if (idx >= 0 && idx < VISIBLE && idx + scroll < item_count) {
                     return idx + scroll;
@@ -461,18 +473,28 @@ bool tryAutoConnect(uint32_t timeout_ms) {
 
 void runInteractiveConfig() {
     ensureCanvas();
+    // boot_anim faded the panel to brightness 0; this screen draws but would be
+    // invisible (looks like a dead black watch) unless we light the backlight.
+    M5.Display.setBrightness(200);
 
     while (true) {
         drawStatusOverlay("Scanning Wi-Fi", "...");
         auto nets = scanNets();
         Serial.printf("[wifi] scanned %u SSIDs\n", (unsigned)nets.size());
         if (nets.empty()) {
-            drawStatusOverlay("No Wi-Fi found", "rescanning...");
-            delay(1500);
+            // Don't trap the watch: tap to use offline, otherwise auto-rescan.
+            drawStatusOverlay("No Wi-Fi found", "tap = offline  /  wait = rescan");
+            uint32_t t0 = millis();
+            while (millis() - t0 < 2500) {
+                M5.update();
+                if (M5.Touch.getDetail().wasReleased()) return;   // skip → offline
+                delay(20);
+            }
             continue;
         }
 
         int idx = pickSSID(nets);
+        if (idx == -2) return;   // skip → run offline
         if (idx < 0) continue;   // rescan request
 
         String pass;

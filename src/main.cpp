@@ -456,11 +456,17 @@ void setup() {
     }
 
     if (!wifi_setup::tryAutoConnect(8000)) {
-        Serial.println("[boot] auto-connect failed → interactive config");
+        Serial.println("[boot] auto-connect failed → interactive config (skippable)");
+        // Skippable: a watch must work offline. If the user taps "Skip", this
+        // returns and boot continues to the launcher — RTC keeps time, hearts
+        // just wait for a connection.
         wifi_setup::runInteractiveConfig();
     }
-    Serial.printf("[boot] WiFi connected: %s  IP=%s\n",
-                  wifi_setup::currentSSID().c_str(),
+    // Keep trying in the background so the watch silently reconnects whenever a
+    // saved network comes back in range (after a skip, or a move out of range).
+    WiFi.setAutoReconnect(true);
+    Serial.printf("[boot] WiFi: %s  IP=%s\n",
+                  wifi_setup::isConnected() ? wifi_setup::currentSSID().c_str() : "(offline)",
                   WiFi.localIP().toString().c_str());
 
     // L2: modem-sleep — radio naps between DTIM beacons. MQTT hearts still
