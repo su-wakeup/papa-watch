@@ -32,6 +32,7 @@
 #include "app_launcher.h"
 #include "app_settings.h"
 #include "dad_status.h"
+#include "dad_loc.h"
 #include "heart_relay.h"
 #include "events_store.h"
 #include "papa_quote.h"
@@ -520,6 +521,30 @@ void setup() {
             return;
         }
 
+        // Dad whereabouts: {"cmd":"loc","city":"..","lat":..,"lon":..,"tz":".."}
+        // Lights PAPA's gold dot on the globe at his real city (roadmap: location).
+        if (cmd && strcmp(cmd, "loc") == 0) {
+            const char* city = doc["city"] | "";
+            float lat = doc["lat"] | 0.0f;
+            float lon = doc["lon"] | 0.0f;
+            const char* tz = doc["tz"] | "";
+            if (city[0]) {
+                dad_loc::set(city, lat, lon, tz);
+                char alert[28] = "PAPA ";
+                for (size_t i = 0; city[i] && i < 20; i++) {
+                    char c = city[i];
+                    alert[i + 5] = (c >= 'a' && c <= 'z') ? (c - 'a' + 'A') : c;
+                    alert[i + 6] = 0;
+                }
+                wake_gesture::notifyActivity();
+                hapticHeartbeat();
+                chimeReceive();
+                face_lcd::showAlert(alert, 0xFFC257, 3500);
+                Serial.printf("[loc] PAPA → %s (%.2f, %.2f) tz=%s\n", city, lat, lon, tz);
+            }
+            return;
+        }
+
         // Daily note from PAPA: {"cmd":"quote","text":".."}  (roadmap #5)
         if (cmd && strcmp(cmd, "quote") == 0) {
             const char* txt = doc["text"] | "";
@@ -615,6 +640,7 @@ void setup() {
 
     steps::init();
     alarms::load();
+    dad_loc::load();          // restore PAPA's last-known city for the globe
     wake_gesture::init();
     // Re-detect location by IP on every boot so travel is picked up
     // automatically — the 24h getLocation cache would otherwise pin us to the

@@ -1,6 +1,7 @@
 #include "face_world.h"
 #include "tz_helper.h"
 #include "world_mask.h"
+#include "dad_loc.h"
 #include <lvgl.h>
 #include <Arduino.h>
 #include <esp_heap_caps.h>
@@ -47,6 +48,13 @@ static const City CITIES[] = {
     { "Auckland", -36.8f,  174.8f, "NZST-12NZDT,M9.5.0,M4.1.0/3",  false },
 };
 static constexpr int NC = sizeof(CITIES) / sizeof(CITIES[0]);
+
+// PAPA's dot (CITIES[0]) follows dad_loc once a real /where has arrived;
+// otherwise it falls back to the static Beijing home entry.
+static inline float       cityLat (int i){ return (i==0 && dad_loc::has()) ? dad_loc::lat()  : CITIES[i].lat;  }
+static inline float       cityLon (int i){ return (i==0 && dad_loc::has()) ? dad_loc::lon()  : CITIES[i].lon;  }
+static inline const char* cityName(int i){ return (i==0 && dad_loc::has()) ? dad_loc::city() : CITIES[i].name; }
+static inline const char* cityTz  (int i){ return (i==0 && dad_loc::has()) ? dad_loc::tz()   : CITIES[i].tz;   }
 
 static constexpr int   CANVAS_SZ = 372;
 static constexpr int   CC        = CANVAS_SZ / 2;
@@ -180,7 +188,7 @@ static void drawGlobe() {
     }
     // city dots — every city marked; family cities (PAPA/Stanley) bigger + gold
     for (int i = 0; i < NC; i++) {
-        int x, y; if (!project(CITIES[i].lat, CITIES[i].lon, &x, &y)) continue;
+        int x, y; if (!project(cityLat(i), cityLon(i), &x, &y)) continue;
         bool f = CITIES[i].focal;
         uint32_t c = f ? 0xFFC257 : 0xFFE6C0;
         int rr = f ? 3 : 2, r2 = rr * rr;
@@ -202,7 +210,7 @@ static void layoutLabels() {
     int   focus = -1;
     float bestD2 = 1e18f;
     for (int i = 0; i < NC; i++) {
-        s_vis[i] = project(CITIES[i].lat, CITIES[i].lon, &s_vx[i], &s_vy[i]);
+        s_vis[i] = project(cityLat(i), cityLon(i), &s_vx[i], &s_vy[i]);
         if (s_vis[i] && !CITIES[i].focal) {
             float dx = s_vx[i] - CC, dy = s_vy[i] - CC, d2 = dx * dx + dy * dy;
             if (d2 < bestD2) { bestD2 = d2; focus = i; }
@@ -213,8 +221,9 @@ static void layoutLabels() {
         bool show = s_vis[i] && (CITIES[i].focal || i == focus);
         if (!show) { lv_obj_add_flag(s_city_lbl[i], LV_OBJ_FLAG_HIDDEN); continue; }
         lv_obj_remove_flag(s_city_lbl[i], LV_OBJ_FLAG_HIDDEN);
-        struct tm t; tz_helper::localtime_in(CITIES[i].tz, now, &t);
-        snprintf(buf, sizeof(buf), "%s %02d:%02d", CITIES[i].name, t.tm_hour, t.tm_min);
+        struct tm t; tz_helper::localtime_in(cityTz(i), now, &t);
+        const char* tag = (i == 0) ? "PAPA " : (i == 1) ? "ME " : "";
+        snprintf(buf, sizeof(buf), "%s%s %02d:%02d", tag, cityName(i), t.tm_hour, t.tm_min);
         lv_label_set_text(s_city_lbl[i], buf);
         lv_obj_align(s_city_lbl[i], LV_ALIGN_CENTER, (s_vx[i] - CC), (s_vy[i] - CC) - 15);
     }
@@ -257,9 +266,13 @@ void create(lv_obj_t* parent) {
 void update() {
     if (!s_root) return;
     layoutLabels();
-    // Advance the day/night terminator once a minute (cheap; no need per second).
+    // Advance the day/night terminator once a minute (cheap; no need per second),
+    // and redraw immediately when a fresh /where moves PAPA's dot.
+    static uint32_t s_loc_ver = 0;
+    bool loc_changed = (dad_loc::version() != s_loc_ver);
+    if (loc_changed) s_loc_ver = dad_loc::version();
     struct tm t; time_t now = time(nullptr); localtime_r(&now, &t);
-    if (s_buf && t.tm_min != s_last_min) {
+    if (s_buf && (t.tm_min != s_last_min || loc_changed)) {
         s_last_min = t.tm_min;
         drawGlobe();
     }

@@ -162,6 +162,34 @@ async function telegramSend(token, chatId, text) {
     });
 }
 
+// Where PAPA is — name (+ aliases) → lat, lon, POSIX TZ (DST baked in, same
+// style as the watch's tz_helper). Lights PAPA's gold dot on the globe.
+const WHERE_CITIES = {
+    shenzhen:   { label: "Shenzhen",   lat: 22.54, lon: 114.06, tz: "CST-8" },
+    beijing:    { label: "Beijing",    lat: 39.90, lon: 116.41, tz: "CST-8" },
+    shanghai:   { label: "Shanghai",   lat: 31.23, lon: 121.47, tz: "CST-8" },
+    guangzhou:  { label: "Guangzhou",  lat: 23.13, lon: 113.26, tz: "CST-8" },
+    hongkong:   { label: "Hong Kong",  lat: 22.32, lon: 114.17, tz: "HKT-8" },
+    hk:         { label: "Hong Kong",  lat: 22.32, lon: 114.17, tz: "HKT-8" },
+    "los gatos":{ label: "Los Gatos",  lat: 37.23, lon: -121.97,tz: "PST8PDT,M3.2.0,M11.1.0" },
+    home:       { label: "Los Gatos",  lat: 37.23, lon: -121.97,tz: "PST8PDT,M3.2.0,M11.1.0" },
+    "san jose": { label: "San Jose",   lat: 37.34, lon: -121.89,tz: "PST8PDT,M3.2.0,M11.1.0" },
+    sf:         { label: "SF",         lat: 37.77, lon: -122.42,tz: "PST8PDT,M3.2.0,M11.1.0" },
+    "san francisco": { label: "SF",    lat: 37.77, lon: -122.42,tz: "PST8PDT,M3.2.0,M11.1.0" },
+    la:         { label: "LA",         lat: 34.05, lon: -118.24,tz: "PST8PDT,M3.2.0,M11.1.0" },
+    "los angeles": { label: "LA",      lat: 34.05, lon: -118.24,tz: "PST8PDT,M3.2.0,M11.1.0" },
+    nyc:        { label: "New York",   lat: 40.71, lon: -74.01, tz: "EST5EDT,M3.2.0,M11.1.0" },
+    "new york": { label: "New York",   lat: 40.71, lon: -74.01, tz: "EST5EDT,M3.2.0,M11.1.0" },
+    seattle:    { label: "Seattle",    lat: 47.61, lon: -122.33,tz: "PST8PDT,M3.2.0,M11.1.0" },
+    tokyo:      { label: "Tokyo",      lat: 35.69, lon: 139.69, tz: "JST-9" },
+    seoul:      { label: "Seoul",      lat: 37.57, lon: 127.00, tz: "KST-9" },
+    singapore:  { label: "Singapore",  lat: 1.35,  lon: 103.82, tz: "SGT-8" },
+    dubai:      { label: "Dubai",      lat: 25.20, lon: 55.27,  tz: "GST-4" },
+    london:     { label: "London",     lat: 51.51, lon: -0.13,  tz: "GMT0BST,M3.5.0/1,M10.5.0" },
+    paris:      { label: "Paris",      lat: 48.86, lon: 2.35,   tz: "CET-1CEST,M3.5.0,M10.5.0/3" },
+    sydney:     { label: "Sydney",     lat: -33.87,lon: 151.21, tz: "AEST-10AEDT,M10.1.0,M4.1.0/3" },
+};
+
 const HELP = [
     "Stanley's watch — control panel",
     "",
@@ -173,6 +201,8 @@ const HELP = [
     "/status away",
     "/status thinking",
     "/status auto     clear override, back to time-based auto",
+    "/where shenzhen  light PAPA's dot on Stanley's globe",
+    "/where los gatos / tokyo / london / ...",
     "/ota             trigger firmware update check",
     "/help            this message",
 ].join("\n");
@@ -243,6 +273,30 @@ async function handleTelegram(update, env) {
                 arg === "auto"
                     ? "🕒 status → auto (clears override)"
                     : `✨ status → ${arg.toUpperCase()} (6h)`);
+        } catch (e) {
+            await telegramSend(env.TELEGRAM_BOT_TOKEN, chatId, `failed: ${e.message}`);
+        }
+        return;
+    }
+
+    if (text === "/where" || text.startsWith("/where ")) {
+        const arg = text.slice(6).trim().toLowerCase().replace(/\s+/g, " ");
+        const city = WHERE_CITIES[arg];
+        if (!arg || !city) {
+            const known = [...new Set(Object.values(WHERE_CITIES).map((c) => c.label))].join(", ");
+            await telegramSend(env.TELEGRAM_BOT_TOKEN, chatId,
+                `usage: /where <city>\nknown: ${known}`);
+            return;
+        }
+        try {
+            // Retained: the watch picks it up the moment it next connects, even
+            // if it was offline when you sent this.
+            await publishMqtt(env.MQTT_BROKER_WSS, topic,
+                JSON.stringify({ cmd: "loc", city: city.label,
+                                 lat: city.lat, lon: city.lon, tz: city.tz }),
+                { retain: true });
+            await telegramSend(env.TELEGRAM_BOT_TOKEN, chatId,
+                `📍 PAPA → ${city.label} (Stanley's globe lights up there)`);
         } catch (e) {
             await telegramSend(env.TELEGRAM_BOT_TOKEN, chatId, `failed: ${e.message}`);
         }
