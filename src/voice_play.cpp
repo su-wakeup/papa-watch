@@ -1,6 +1,7 @@
 #include "voice_play.h"
 #include <Arduino.h>
 #include <WiFi.h>
+#include <WiFiClientSecure.h>
 #include <HTTPClient.h>
 #include <M5Unified.h>
 #include <esp_heap_caps.h>
@@ -28,7 +29,15 @@ void tick() {
     s_pending = false;
 
     HTTPClient http;
-    if (!http.begin(s_url)) { Serial.println("[voice] http.begin failed"); return; }
+    WiFiClientSecure secure;                         // must outlive the stream reads below
+    bool began;
+    if (strncmp(s_url, "https://", 8) == 0) {
+        secure.setInsecure();                        // skip cert check (same as OTA)
+        began = http.begin(secure, s_url);
+    } else {
+        began = http.begin(s_url);
+    }
+    if (!began) { Serial.println("[voice] http.begin failed"); return; }
     int code = http.GET();
     if (code != HTTP_CODE_OK) {
         Serial.printf("[voice] GET %d\n", code);

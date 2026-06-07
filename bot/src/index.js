@@ -12,6 +12,8 @@
 // MQTT 3.1.1 over WebSocket (subprotocol "mqtt"), no auth, QoS 0.
 // We CONNECT → PUBLISH → DISCONNECT in a single request lifetime.
 
+import { decodeVoiceToPcm16, pcm16ToWav, tgGetFileBytes, tgSendAudioWav } from "./voice.js";
+
 const PROTOCOL_NAME = new Uint8Array([0x00, 0x04, 0x4D, 0x51, 0x54, 0x54]); // "MQTT"
 const PROTOCOL_LEVEL = 0x04;                                                // 3.1.1
 const FLAGS_CLEAN_SESSION = 0x02;
@@ -207,11 +209,10 @@ const HELP = [
     "/help            this message",
 ].join("\n");
 
-async function handleTelegram(update, env) {
+async function handleTelegram(update, env, baseUrl) {
     const msg = update.message;
-    if (!msg || !msg.text) return;
+    if (!msg) return;
 
-    const text = msg.text.trim();
     const from = msg.from?.username || msg.from?.first_name || "unknown";
     const chatId = msg.chat.id;
 
@@ -225,6 +226,30 @@ async function handleTelegram(update, env) {
     }
 
     const topic = `stopwatch/${env.PAIR_ID}/from-dad`;
+
+    // PAPA→Stanley voice (roadmap #6): a Telegram voice note (OGG/Opus) →
+    // decode to 16 kHz PCM, park it in R2, tell the watch where to fetch it.
+    if (msg.voice) {
+        try {
+            const ogg = await tgGetFileBytes(env.TELEGRAM_BOT_TOKEN, msg.voice.file_id);
+            const { bytes, samples, truncated } = await decodeVoiceToPcm16(ogg);
+            const id = crypto.randomUUID();
+            await env.EMAILS_R2.put(`voice/${id}.pcm`, bytes,
+                { httpMetadata: { contentType: "application/octet-stream" } });
+            const clipUrl = `${baseUrl}/voice/${env.VOICE_TOKEN}/clip/${id}.pcm`;
+            await publishMqtt(env.MQTT_BROKER_WSS, topic, JSON.stringify({ cmd: "voice", url: clipUrl }));
+            const secs = (samples / 16000).toFixed(1);
+            await telegramSend(env.TELEGRAM_BOT_TOKEN, chatId,
+                `🎙️ 已发往 Stanley 的手表（${secs}s${truncated ? "，截断至30s" : ""}）。手表醒着时才会播放。`);
+        } catch (e) {
+            console.error("[voice→watch] failed:", e.stack || e.message);
+            await telegramSend(env.TELEGRAM_BOT_TOKEN, chatId, `语音处理失败: ${e.message}`);
+        }
+        return;
+    }
+
+    if (!msg.text) return;
+    const text = msg.text.trim();
 
     if (text === "/start" || text === "/help") {
         await telegramSend(env.TELEGRAM_BOT_TOKEN, chatId, HELP);
@@ -1325,9 +1350,43 @@ export default {
             }
             const update = await request.json();
             // Telegram expects fast 200; do the work asynchronously.
-            ctx.waitUntil(handleTelegram(update, env).catch((e) =>
+            ctx.waitUntil(handleTelegram(update, env, url.origin).catch((e) =>
                 console.error("[handleTelegram] threw:", e.message, e.stack)));
             return new Response("ok");
+        }
+
+        // Stanley→PAPA voice (roadmap #6): the watch POSTs raw 16 kHz mono int16
+        // PCM here; we wrap it as WAV and drop it into PAPA's Telegram chat.
+        if (request.method === "POST" && url.pathname === `/voice/${env.VOICE_TOKEN}/upload`) {
+            try {
+                const pcm = new Uint8Array(await request.arrayBuffer());
+                if (pcm.length < 2 || pcm.length > 4 * 1024 * 1024)
+                    return new Response("bad size", { status: 400 });
+                const secs = (pcm.length / 2 / 16000).toFixed(1);
+                await tgSendAudioWav(env.TELEGRAM_BOT_TOKEN, env.PAPA_CHAT_ID,
+                    pcm16ToWav(pcm), `🎙️ Stanley · ${secs}s`);
+                return new Response("ok");
+            } catch (e) {
+                console.error("[voice upload] failed:", e.stack || e.message);
+                return new Response(`fail: ${e.message}`, { status: 500 });
+            }
+        }
+
+        // Serve a decoded PAPA voice clip to the watch (raw int16 PCM). The watch
+        // reads Content-Length then streams the body into a PSRAM buffer.
+        {
+            const prefix = `/voice/${env.VOICE_TOKEN}/clip/`;
+            if (request.method === "GET" && url.pathname.startsWith(prefix)) {
+                const id = url.pathname.slice(prefix.length).replace(/\.pcm$/, "");
+                const obj = await env.EMAILS_R2.get(`voice/${id}.pcm`);
+                if (!obj) return new Response("not found", { status: 404 });
+                return new Response(obj.body, {
+                    headers: {
+                        "content-type": "application/octet-stream",
+                        "content-length": String(obj.size),
+                    },
+                });
+            }
         }
 
         return new Response("not found", { status: 404 });

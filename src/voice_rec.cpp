@@ -1,6 +1,7 @@
 #include "voice_rec.h"
 #include <Arduino.h>
 #include <WiFi.h>
+#include <WiFiClientSecure.h>
 #include <HTTPClient.h>
 #include <M5Unified.h>
 #include <esp_heap_caps.h>
@@ -10,8 +11,9 @@ namespace voice_rec {
 static constexpr int      RATE     = 16000;
 static constexpr uint32_t REC_MS   = 5000;
 static constexpr size_t   CAP      = (size_t)RATE * 5;          // samples (5 s)
-// TEMP bench target — the real one becomes the Worker upload route.
-static const char*        UPLOAD_URL = "http://192.168.7.166:8000/upload";
+// Worker route: wraps the PCM as WAV and drops it into PAPA's Telegram chat.
+static const char*        UPLOAD_URL =
+    "https://papa-watch-bot.su-wakeup.workers.dev/voice/555dcb03d94bd5e8/upload";
 
 enum St { IDLE, REC, UPLOADING };
 static St        s_st  = IDLE;
@@ -55,7 +57,15 @@ void tick() {
 
     if (WiFi.status() == WL_CONNECTED) {
         HTTPClient http;
-        if (http.begin(UPLOAD_URL)) {
+        WiFiClientSecure secure;
+        bool began;
+        if (strncmp(UPLOAD_URL, "https://", 8) == 0) {
+            secure.setInsecure();                 // skip cert check (same as OTA)
+            began = http.begin(secure, UPLOAD_URL);
+        } else {
+            began = http.begin(UPLOAD_URL);
+        }
+        if (began) {
             http.addHeader("Content-Type", "application/octet-stream");
             int code = http.POST((uint8_t*)s_buf, CAP * 2);
             if (code == 200) snprintf(s_status, sizeof(s_status), "Sent OK");
