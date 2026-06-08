@@ -37,6 +37,7 @@
 #include "events_store.h"
 #include "papa_quote.h"
 #include "voice_play.h"
+#include "voice_inbox.h"
 #include "ota.h"
 #include <ArduinoJson.h>
 #include "audio/cow_moo.h"
@@ -557,16 +558,17 @@ void setup() {
             return;
         }
 
-        // Voice clip from PAPA: {"cmd":"voice","url":"http://.../clip.pcm"}
-        // (raw 16kHz mono int16 PCM; Opus→PCM is done server-side).
-        if (cmd && strcmp(cmd, "voice") == 0) {
-            const char* url = doc["url"] | "";
-            if (url[0]) {
-                voice_play::request(url);
+        // New PAPA voice mail: {"cmd":"voice_new","ts":<epoch s>,"secs":..}
+        // Do NOT auto-play (Stanley may be in class) — just buzz once and let
+        // him open the PAPA app to listen. De-dup by ts is cheap idempotency;
+        // the durable copy lives server-side (the watch fetches the inbox list).
+        if (cmd && strcmp(cmd, "voice_new") == 0) {
+            uint32_t ts = doc["ts"] | 0u;
+            if (voice_inbox::onPush(ts)) {
                 wake_gesture::notifyActivity();
-                hapticHeartbeat();
-                face_lcd::showAlert("PAPA VOICE", 0xC8A050, 2500);
-                Serial.printf("[voice] queued %s\n", url);
+                hapticHeartbeat();                 // gentle buzz, no chime
+                face_lcd::showAlert("PAPA VOICE", 0xC8A050, 2000);
+                Serial.printf("[voice] new mail ts=%u\n", ts);
             }
             return;
         }
@@ -599,6 +601,7 @@ void setup() {
     });
     events_store::begin();
     papa_quote::begin();
+    voice_inbox::begin();
     heart_relay::begin("stanley-dad-2026");
 
     Serial.printf("[ota] firmware v%s\n", ota::FIRMWARE_VERSION);

@@ -228,19 +228,28 @@ async function handleTelegram(update, env, baseUrl) {
     const topic = `stopwatch/${env.PAIR_ID}/from-dad`;
 
     // PAPA→Stanley voice (roadmap #6): a Telegram voice note (OGG/Opus) →
-    // decode to 16 kHz PCM, park it in R2, tell the watch where to fetch it.
+    // decode to 16 kHz PCM, park it in R2 (a rolling 7-day mailbox), and ping
+    // the watch. The watch does NOT auto-play — it buzzes and lists the clip so
+    // Stanley plays it when he wants (no blurting out in class).
     if (msg.voice) {
         try {
             const ogg = await tgGetFileBytes(env.TELEGRAM_BOT_TOKEN, msg.voice.file_id);
             const { bytes, samples, truncated } = await decodeVoiceToPcm16(ogg);
             const id = crypto.randomUUID();
-            await env.EMAILS_R2.put(`voice/${id}.pcm`, bytes,
-                { httpMetadata: { contentType: "application/octet-stream" } });
-            const clipUrl = `${baseUrl}/voice/${env.VOICE_TOKEN}/clip/${id}.pcm`;
-            await publishMqtt(env.MQTT_BROKER_WSS, topic, JSON.stringify({ cmd: "voice", url: clipUrl }));
-            const secs = (samples / 16000).toFixed(1);
+            const secs = +(samples / 16000).toFixed(1);
+            const ts = Math.floor(Date.now() / 1000);            // epoch seconds (fits uint32)
+            await env.EMAILS_R2.put(`voice/${id}.pcm`, bytes, {
+                httpMetadata: { contentType: "application/octet-stream" },
+                customMetadata: { secs: String(secs), ts: String(ts) },
+            });
+            // NOT retained: from-dad already holds the retained daily quote and
+            // MQTT keeps only one retained payload per topic. This is a best-effort
+            // real-time buzz; the server-side inbox (R2 + /inbox) is what makes the
+            // clip durable, so a watch that's asleep now still finds it on next open.
+            await publishMqtt(env.MQTT_BROKER_WSS, topic,
+                JSON.stringify({ cmd: "voice_new", ts, secs }));
             await telegramSend(env.TELEGRAM_BOT_TOKEN, chatId,
-                `🎙️ 已发往 Stanley 的手表（${secs}s${truncated ? "，截断至30s" : ""}）。手表醒着时才会播放。`);
+                `🎙️ 已存入 Stanley 的语音信箱（${secs}s${truncated ? "，截断至30s" : ""}），保留一周。手表会轻震提醒，他在 PAPA app 里随时可听。`);
         } catch (e) {
             console.error("[voice→watch] failed:", e.stack || e.message);
             await telegramSend(env.TELEGRAM_BOT_TOKEN, chatId, `语音处理失败: ${e.message}`);
@@ -1372,6 +1381,19 @@ export default {
             }
         }
 
+        // The watch's voice inbox: the last week of PAPA clips, newest first.
+        if (request.method === "GET" && url.pathname === `/voice/${env.VOICE_TOKEN}/inbox`) {
+            const listed = await env.EMAILS_R2.list({ prefix: "voice/", include: ["customMetadata"] });
+            const items = listed.objects.map((o) => {
+                const id = o.key.slice("voice/".length).replace(/\.pcm$/, "");
+                const ts = +(o.customMetadata?.ts) || Math.floor(o.uploaded.getTime() / 1000);
+                const secs = o.customMetadata?.secs ? +o.customMetadata.secs
+                                                    : +(o.size / 2 / 16000).toFixed(1);
+                return { id, ts, secs };
+            }).sort((a, b) => b.ts - a.ts).slice(0, 20);
+            return new Response(JSON.stringify(items), { headers: { "content-type": "application/json" } });
+        }
+
         // Serve a decoded PAPA voice clip to the watch (raw int16 PCM). The watch
         // reads Content-Length then streams the body into a PSRAM buffer.
         {
@@ -1427,5 +1449,19 @@ export default {
             ctx.waitUntil(pushAllUnsyncedMqtt(env).catch((e) =>
                 console.error("[cron] mqtt push sweep failed:", e.message)));
         }
+        if (env.EMAILS_R2) {
+            ctx.waitUntil(pruneVoiceInbox(env, event.scheduledTime).catch((e) =>
+                console.error("[cron] voice prune failed:", e.message)));
+        }
     },
 };
+
+// The PAPA voice inbox is a rolling 7-day window — drop clips older than that.
+async function pruneVoiceInbox(env, nowMs) {
+    const cutoff = Math.floor(nowMs / 1000) - 7 * 86400;
+    const listed = await env.EMAILS_R2.list({ prefix: "voice/", include: ["customMetadata"] });
+    for (const o of listed.objects) {
+        const ts = +(o.customMetadata?.ts) || Math.floor(o.uploaded.getTime() / 1000);
+        if (ts < cutoff) await env.EMAILS_R2.delete(o.key);
+    }
+}
