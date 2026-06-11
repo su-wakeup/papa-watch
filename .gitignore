@@ -28,3 +28,8 @@ assets/dseg/fonts-DSEG_v046/sample*
 
 # npm dev tools (lv_font_conv) — package.json pins the deps
 node_modules/
+
+# Exported asset packs dropped at repo root — sources already live converted
+# under src/*_ui/ + src/icons/ + assets/. Keep root-level exports out of git.
+/*_lvgl_assets.zip
+/watch_icon_pack_*.zip
