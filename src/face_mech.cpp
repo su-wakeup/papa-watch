@@ -47,7 +47,11 @@ static lv_obj_t* s_bg            = nullptr;
 static lv_obj_t* s_hour          = nullptr;
 static lv_obj_t* s_min           = nullptr;
 static lv_obj_t* s_sec           = nullptr;
-static lv_obj_t* s_pin           = nullptr;
+static lv_obj_t* s_hour_sh       = nullptr;   // drop shadows beneath the two
+static lv_obj_t* s_min_sh        = nullptr;   // big hands — depth, no new bitmap
+static lv_obj_t* s_pin           = nullptr;   // brass dome of the center cap
+static lv_obj_t* s_pin_ring      = nullptr;   // dark bezel under the dome
+static lv_obj_t* s_pin_hi        = nullptr;   // tiny top-left highlight pip
 static lv_obj_t* s_papa_lbl      = nullptr;
 static lv_obj_t* s_papa_time     = nullptr;
 static lv_obj_t* s_son_lbl       = nullptr;
@@ -245,6 +249,21 @@ void create(lv_obj_t* parent) {
     //  with the sepia bg via warm color harmony instead. See color choices
     //  above: cream/amber/peach replace stark white/cyan/lime-green.)
 
+    // ── hand shadows (under the hands): same sprites, blacked out at low opa
+    // and nudged down-right so a soft drop shadow seats the hands above the
+    // dial. Only the two big hands cast — a shadow on the thin sweep second
+    // hand would just read as jitter. ──
+    constexpr int SH_DX = 3, SH_DY = 4;        // light from top-left
+    s_hour_sh = makeHand(s_root, &ui_img_clockwise_hour_png, HOUR_PX, HOUR_PY);
+    s_min_sh  = makeHand(s_root, &ui_img_clockwise_min_png,  MIN_PX,  MIN_PY);
+    lv_obj_set_pos(s_hour_sh, CX - HOUR_PX + SH_DX, CY - HOUR_PY + SH_DY);
+    lv_obj_set_pos(s_min_sh,  CX - MIN_PX  + SH_DX, CY - MIN_PY  + SH_DY);
+    for (lv_obj_t* sh : {s_hour_sh, s_min_sh}) {
+        lv_obj_set_style_image_recolor(sh, lv_color_black(), 0);
+        lv_obj_set_style_image_recolor_opa(sh, LV_OPA_COVER, 0);
+        lv_obj_set_style_image_opa(sh, 80, 0);                 // ~31% — soft
+    }
+
     // ── hands (back-to-front) ──
     s_hour = makeHand(s_root, &ui_img_clockwise_hour_png, HOUR_PX, HOUR_PY);
     s_min  = makeHand(s_root, &ui_img_clockwise_min_png,  MIN_PX,  MIN_PY);
@@ -257,14 +276,20 @@ void create(lv_obj_t* parent) {
     lv_obj_set_style_image_recolor(s_sec, lv_color_hex(0xE6C46D), 0);
     lv_obj_set_style_image_recolor_opa(s_sec, LV_OPA_COVER, 0);
 
-    // ── center cap ──
-    s_pin = lv_obj_create(s_root);
-    lv_obj_remove_style_all(s_pin);
-    lv_obj_set_size(s_pin, 14, 14);
-    lv_obj_set_style_radius(s_pin, LV_RADIUS_CIRCLE, 0);
-    lv_obj_set_style_bg_color(s_pin, lv_color_hex(0xE6C46D), 0);
-    lv_obj_set_style_bg_opa(s_pin, LV_OPA_COVER, 0);
-    lv_obj_align(s_pin, LV_ALIGN_CENTER, 0, 0);
+    // ── center cap: domed screw-down crown over the hand pivots ──
+    auto mk_cap = [&](int sz, uint32_t col, int dx, int dy) {
+        lv_obj_t* c = lv_obj_create(s_root);
+        lv_obj_remove_style_all(c);
+        lv_obj_set_size(c, sz, sz);
+        lv_obj_set_style_radius(c, LV_RADIUS_CIRCLE, 0);
+        lv_obj_set_style_bg_color(c, lv_color_hex(col), 0);
+        lv_obj_set_style_bg_opa(c, LV_OPA_COVER, 0);
+        lv_obj_align(c, LV_ALIGN_CENTER, dx, dy);
+        return c;
+    };
+    s_pin_ring = mk_cap(20, 0x4A2E14, 0, 0);   // dark brass bezel
+    s_pin      = mk_cap(13, 0xE6C46D, 0, 0);   // brass dome
+    s_pin_hi   = mk_cap(4,  0xF7ECD6, -2, -2); // top-left highlight pip
 
     update();
 }
@@ -295,9 +320,12 @@ void update() {
     struct tm t; tz_helper::localtime_in(TZ_SON, now, &t);
 
     int h = t.tm_hour % 12, m = t.tm_min, s = t.tm_sec;
-    lv_image_set_rotation(s_hour, (h * 300) + (m * 5));
-    lv_image_set_rotation(s_min,  m * 60);
+    int hour_ang = (h * 300) + (m * 5), min_ang = m * 60;
+    lv_image_set_rotation(s_hour, hour_ang);
+    lv_image_set_rotation(s_min,  min_ang);
     lv_image_set_rotation(s_sec,  s * 60);
+    lv_image_set_rotation(s_hour_sh, hour_ang);
+    lv_image_set_rotation(s_min_sh,  min_ang);
 
     char buf[16];
     snprintf(buf, sizeof(buf), "%02d:%02d", t.tm_hour, t.tm_min);
@@ -357,6 +385,7 @@ void update() {
 
 void destroy() {
     s_root = s_bg = s_hour = s_min = s_sec = s_pin = nullptr;
+    s_hour_sh = s_min_sh = s_pin_ring = s_pin_hi = nullptr;
     s_weather_icon = s_weather_temp = nullptr;
     s_date = s_battery = s_hearts_lbl = s_steps_lbl = nullptr;
     s_steps_arc = s_steps_pct = s_steps_icon = nullptr;
