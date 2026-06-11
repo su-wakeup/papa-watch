@@ -178,7 +178,7 @@ void enter(lv_obj_t* parent) {
     lv_obj_t* hint = lv_label_create(s_root);
     lv_obj_set_style_text_font(hint, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(hint, lv_color_hex(0x6E4E26), 0);
-    lv_label_set_text(hint, "tap a voice to play  ·  BtnA+B back");
+    lv_label_set_text(hint, "tap a voice to play  |  BtnA+B back");
     lv_obj_align(hint, LV_ALIGN_BOTTOM_MID, 0, -56);
 }
 
