@@ -4,10 +4,13 @@
 
 #pragma once
 
+#include <stdint.h>
+
 namespace papa_quote {
 
 void        begin();              // load the stored note into RAM
 void        set(const char* txt); // cache + persist
 const char* text();               // "" if none received yet
+uint32_t    ts();                 // arrival epoch of the current note (0 if none/pre-NTP)
 
 }  // namespace papa_quote

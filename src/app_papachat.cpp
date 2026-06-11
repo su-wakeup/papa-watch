@@ -4,6 +4,7 @@
 #include "voice_inbox.h"
 #include <lvgl.h>
 #include <string.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <time.h>
 
@@ -12,68 +13,126 @@ LV_FONT_DECLARE(mont_light_24);
 namespace app_papachat {
 
 static lv_obj_t* s_root    = nullptr;
-static lv_obj_t* s_quote   = nullptr;
-static lv_obj_t* s_list    = nullptr;     // scrollable voice-mail list
-static lv_obj_t* s_rec_lbl = nullptr;     // record state ("BtnA: record" / "REC 3s" / "Sent OK")
-static char      s_shown[256] = "\x01";   // force first refresh
+static lv_obj_t* s_log     = nullptr;     // the chat timeline (scrollable flex column)
+static lv_obj_t* s_rec_lbl = nullptr;     // composer status ("hold BtnA" / "REC 3s" / "Sent OK")
+static char      s_shown[256] = "\x01";   // last-rendered note text — rebuild on change
 static bool      s_need_fetch = false;    // pull the inbox once after the screen is up
 
-static const char* PLACEHOLDER =
-    "PAPA's note for you will\nshow up here.";
+// One row on the timeline. kind 0 = PAPA's text note, kind 1 = a voice clip (idx
+// into voice_inbox). Merged from both sources and sorted by ts so notes and
+// clips interleave in one chronological feed instead of two separate zones.
+struct Msg { uint32_t ts; int kind; int idx; };
 
-static void refresh() {
-    const char* q = papa_quote::text();
-    const char* show = (q && q[0]) ? q : PLACEHOLDER;
-    if (strncmp(show, s_shown, sizeof(s_shown)) == 0) return;
-    strncpy(s_shown, show, sizeof(s_shown) - 1);
-    s_shown[sizeof(s_shown) - 1] = 0;
-    lv_label_set_text(s_quote, show);
+static void fmtAge(uint32_t ts, char* out, size_t n) {
+    if (ts == 0) { out[0] = 0; return; }
+    time_t now = time(nullptr);
+    long age = (now > (time_t)ts) ? (long)(now - ts) : 0;
+    if      (age < 90)    snprintf(out, n, "now");
+    else if (age < 3600)  snprintf(out, n, "%ldm ago", age / 60);
+    else if (age < 86400) snprintf(out, n, "%ldh ago", age / 3600);
+    else                  snprintf(out, n, "%ldd ago", age / 86400);
 }
 
-static void onItemClick(lv_event_t* e) {
-    lv_obj_t* btn = (lv_obj_t*)lv_event_get_target(e);
-    int i = (int)(intptr_t)lv_obj_get_user_data(btn);
+static void onBubbleClick(lv_event_t* e) {
+    lv_obj_t* b = (lv_obj_t*)lv_event_get_target(e);
+    int i = (int)(intptr_t)lv_obj_get_user_data(b);
     voice_inbox::play(i);
     if (s_rec_lbl) lv_label_set_text(s_rec_lbl, "Playing...");
 }
 
-static void fmtRow(const voice_inbox::Item& it, char* out, size_t n) {
-    int s = (int)(it.secs + 0.5f);
-    time_t now = time(nullptr);
-    long age = (now > (time_t)it.ts) ? (long)(now - it.ts) : 0;
-    char when[16];
-    if      (age < 90)    snprintf(when, sizeof(when), "now");
-    else if (age < 3600)  snprintf(when, sizeof(when), "%ldm ago", age / 60);
-    else if (age < 86400) snprintf(when, sizeof(when), "%ldh ago", age / 3600);
-    else                  snprintf(when, sizeof(when), "%ldd ago", age / 86400);
-    snprintf(out, n, LV_SYMBOL_PLAY "  %d:%02d   %s", s / 60, s % 60, when);
+// Incoming (PAPA) bubble: warm panel, hugs the left edge, content-sized.
+static lv_obj_t* makeBubble() {
+    lv_obj_t* b = lv_obj_create(s_log);
+    lv_obj_remove_flag(b, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_width(b, LV_SIZE_CONTENT);
+    lv_obj_set_height(b, LV_SIZE_CONTENT);
+    lv_obj_set_style_max_width(b, 250, 0);
+    lv_obj_set_style_bg_color(b, lv_color_hex(0x241A0E), 0);
+    lv_obj_set_style_bg_opa(b, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(b, 14, 0);
+    lv_obj_set_style_border_width(b, 0, 0);
+    lv_obj_set_style_pad_all(b, 12, 0);
+    lv_obj_set_flex_flow(b, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_row(b, 3, 0);
+    return b;
 }
 
-static void rebuildList() {
-    if (!s_list) return;
-    lv_obj_clean(s_list);
+static lv_obj_t* mkTime(lv_obj_t* bubble, uint32_t ts) {
+    char when[16];
+    fmtAge(ts, when, sizeof(when));
+    if (!when[0]) return nullptr;
+    lv_obj_t* t = lv_label_create(bubble);
+    lv_obj_set_style_text_font(t, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(t, lv_color_hex(0x7A5A30), 0);
+    lv_label_set_text(t, when);
+    return t;
+}
+
+static void renderTextBubble(uint32_t ts) {
+    lv_obj_t* b = makeBubble();
+    lv_obj_t* t = lv_label_create(b);
+    lv_obj_set_style_text_font(t, &mont_light_24, 0);
+    lv_obj_set_style_text_color(t, lv_color_hex(0xF5E8D0), 0);   // cream
+    lv_label_set_long_mode(t, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(t, 222);                                    // wrap inside the bubble
+    lv_label_set_text(t, papa_quote::text());
+    mkTime(b, ts);
+}
+
+static void renderVoiceBubble(int idx) {
+    const voice_inbox::Item& it = voice_inbox::item(idx);
+    lv_obj_t* b = makeBubble();
+    lv_obj_add_flag(b, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_user_data(b, (void*)(intptr_t)idx);
+    lv_obj_add_event_cb(b, onBubbleClick, LV_EVENT_CLICKED, nullptr);
+
+    int s = (int)(it.secs + 0.5f);
+    char row[24];
+    snprintf(row, sizeof(row), LV_SYMBOL_PLAY "  %d:%02d", s / 60, s % 60);
+    lv_obj_t* r = lv_label_create(b);
+    lv_obj_set_style_text_font(r, &lv_font_montserrat_18, 0);
+    lv_obj_set_style_text_color(r, lv_color_hex(0xF5E8D0), 0);
+    lv_label_set_text(r, row);
+    mkTime(b, it.ts);
+}
+
+static void buildTimeline() {
+    if (!s_log) return;
+    lv_obj_clean(s_log);
+
+    Msg msgs[1 + 20];
+    int m = 0;
+    const char* note = papa_quote::text();
+    if (note && note[0]) msgs[m++] = { papa_quote::ts(), 0, -1 };
     int n = voice_inbox::count();
-    if (n == 0) {
-        lv_obj_t* empty = lv_label_create(s_list);
+    for (int i = 0; i < n && m < (int)(sizeof(msgs) / sizeof(msgs[0])); i++)
+        msgs[m++] = { voice_inbox::item(i).ts, 1, i };
+
+    // insertion sort ascending by ts → oldest on top, newest at the bottom.
+    // a ts==0 note (arrived pre-NTP) sorts to the very top, which is fine.
+    for (int a = 1; a < m; a++) {
+        Msg key = msgs[a];
+        int b = a - 1;
+        while (b >= 0 && msgs[b].ts > key.ts) { msgs[b + 1] = msgs[b]; b--; }
+        msgs[b + 1] = key;
+    }
+
+    if (m == 0) {
+        lv_obj_t* empty = lv_label_create(s_log);
         lv_obj_set_style_text_font(empty, &lv_font_montserrat_14, 0);
         lv_obj_set_style_text_color(empty, lv_color_hex(0x6E4E26), 0);
-        lv_label_set_text(empty, "no voice yet");
+        lv_label_set_text(empty, "No messages from PAPA yet.");
         return;
     }
-    for (int i = 0; i < n; i++) {
-        char row[40];
-        fmtRow(voice_inbox::item(i), row, sizeof(row));
-        lv_obj_t* btn = lv_button_create(s_list);
-        lv_obj_set_width(btn, lv_pct(100));
-        lv_obj_set_style_bg_color(btn, lv_color_hex(0x2A1E10), 0);
-        lv_obj_set_user_data(btn, (void*)(intptr_t)i);
-        lv_obj_add_event_cb(btn, onItemClick, LV_EVENT_CLICKED, nullptr);
-        lv_obj_t* lbl = lv_label_create(btn);
-        lv_obj_set_style_text_font(lbl, &lv_font_montserrat_18, 0);
-        lv_obj_set_style_text_color(lbl, lv_color_hex(0xF5E8D0), 0);
-        lv_label_set_text(lbl, row);
-        lv_obj_center(lbl);
+
+    for (int k = 0; k < m; k++) {
+        if (msgs[k].kind == 0) renderTextBubble(msgs[k].ts);
+        else                   renderVoiceBubble(msgs[k].idx);
     }
+
+    // jump to the newest message, like opening a chat.
+    lv_obj_update_layout(s_log);
+    lv_obj_scroll_to_y(s_log, LV_COORD_MAX, LV_ANIM_OFF);
 }
 
 void enter(lv_obj_t* parent) {
@@ -81,63 +140,74 @@ void enter(lv_obj_t* parent) {
     lv_obj_set_style_bg_color(s_root, lv_color_black(), 0);
     lv_obj_set_style_bg_opa(s_root, LV_OPA_COVER, 0);
 
+    // ── chat title (pinned) ──
     lv_obj_t* hdr = lv_label_create(s_root);
-    lv_obj_set_style_text_font(hdr, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_font(hdr, &lv_font_montserrat_18, 0);
     lv_obj_set_style_text_color(hdr, lv_color_hex(0xC07A2E), 0);   // warm amber
-    lv_label_set_text(hdr, "FROM PAPA");
-    lv_obj_align(hdr, LV_ALIGN_TOP_MID, 0, 58);
+    lv_label_set_text(hdr, "PAPA");
+    lv_obj_align(hdr, LV_ALIGN_TOP_MID, 0, 40);
 
-    s_quote = lv_label_create(s_root);
-    lv_obj_set_style_text_font(s_quote, &mont_light_24, 0);
-    lv_obj_set_style_text_color(s_quote, lv_color_hex(0xF5E8D0), 0);   // cream
-    lv_obj_set_style_text_align(s_quote, LV_TEXT_ALIGN_CENTER, 0);
-    lv_label_set_long_mode(s_quote, LV_LABEL_LONG_WRAP);
-    lv_obj_set_width(s_quote, 300);                                    // stay off the round edge
-    lv_obj_align(s_quote, LV_ALIGN_TOP_MID, 0, 86);
-    s_shown[0] = '\x01';                                               // force refresh
-    refresh();
+    // ── timeline (scrollable): one chronological feed of bubbles ──
+    s_log = lv_obj_create(s_root);
+    lv_obj_set_size(s_log, 332, 300);
+    lv_obj_align(s_log, LV_ALIGN_TOP_MID, 0, 70);
+    lv_obj_set_style_bg_opa(s_log, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(s_log, 0, 0);
+    lv_obj_set_style_pad_all(s_log, 4, 0);
+    lv_obj_set_flex_flow(s_log, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(s_log, LV_FLEX_ALIGN_START,
+                          LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+    lv_obj_set_style_pad_row(s_log, 8, 0);
+    lv_obj_set_scroll_dir(s_log, LV_DIR_VER);
+    lv_obj_set_scrollbar_mode(s_log, LV_SCROLLBAR_MODE_OFF);
 
-    // Voice mailbox: a scrollable list of PAPA's clips; tap one to play it.
-    s_list = lv_obj_create(s_root);
-    lv_obj_set_size(s_list, 320, 150);
-    lv_obj_align(s_list, LV_ALIGN_CENTER, 0, 30);
-    lv_obj_set_style_bg_opa(s_list, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(s_list, 0, 0);
-    lv_obj_set_flex_flow(s_list, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_style_pad_row(s_list, 6, 0);
-    rebuildList();
+    s_shown[0] = '\x01';
+    strncpy(s_shown, (papa_quote::text()[0] ? papa_quote::text() : "\x01"),
+            sizeof(s_shown) - 1);
+    s_shown[sizeof(s_shown) - 1] = 0;
+    buildTimeline();
     s_need_fetch = true;
 
+    // ── composer (pinned): record a voice reply to PAPA ──
     s_rec_lbl = lv_label_create(s_root);
     lv_obj_set_style_text_font(s_rec_lbl, &lv_font_montserrat_18, 0);
     lv_obj_set_style_text_color(s_rec_lbl, lv_color_hex(0x80C060), 0);
-    lv_label_set_text(s_rec_lbl, "BtnA: record 5s to PAPA");
-    lv_obj_align(s_rec_lbl, LV_ALIGN_BOTTOM_MID, 0, -86);
+    lv_label_set_text(s_rec_lbl, "hold BtnA to reply");
+    lv_obj_align(s_rec_lbl, LV_ALIGN_BOTTOM_MID, 0, -80);
 
     lv_obj_t* hint = lv_label_create(s_root);
     lv_obj_set_style_text_font(hint, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(hint, lv_color_hex(0x6E4E26), 0);
-    lv_label_set_text(hint, "tap a clip to play  ·  BtnA+B back");
-    lv_obj_align(hint, LV_ALIGN_BOTTOM_MID, 0, -62);
+    lv_label_set_text(hint, "tap a voice to play  ·  BtnA+B back");
+    lv_obj_align(hint, LV_ALIGN_BOTTOM_MID, 0, -56);
 }
 
 void leave() {
     if (s_root) {
         lv_obj_clean(s_root);
-        s_root = nullptr; s_quote = nullptr; s_list = nullptr; s_rec_lbl = nullptr;
+        s_root = nullptr; s_log = nullptr; s_rec_lbl = nullptr;
     }
 }
 
 void tick() {
-    if (s_quote) refresh();
+    // Rebuild the feed when PAPA's note text changes (cheap; only on change).
+    if (s_log) {
+        const char* q = papa_quote::text();
+        const char* cur = (q && q[0]) ? q : "\x01";
+        if (strncmp(cur, s_shown, sizeof(s_shown)) != 0) {
+            strncpy(s_shown, cur, sizeof(s_shown) - 1);
+            s_shown[sizeof(s_shown) - 1] = 0;
+            buildTimeline();
+        }
+    }
     if (s_need_fetch) {                 // one-shot inbox pull, after the screen is drawn
         s_need_fetch = false;
         voice_inbox::fetch();
-        rebuildList();
+        buildTimeline();
     }
     voice_rec::tick();
     if (s_rec_lbl) {
-        const char* st = voice_rec::statusText();   // shows REC.. / Uploading.. / Sent OK
+        const char* st = voice_rec::statusText();   // REC.. / Uploading.. / Sent OK
         if (st[0]) lv_label_set_text(s_rec_lbl, st);
     }
 }
