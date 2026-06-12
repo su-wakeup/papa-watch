@@ -60,6 +60,7 @@ void fetch() {
         it.id[sizeof(it.id) - 1] = 0;
         it.ts   = o["ts"]   | 0u;
         it.secs = o["secs"] | 0.0f;
+        it.out  = strcmp(o["dir"] | "in", "out") == 0;
         if (it.id[0]) s_count++;
     }
 }

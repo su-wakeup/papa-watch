@@ -7,7 +7,7 @@
 
 namespace voice_inbox {
 
-struct Item { char id[40]; uint32_t ts; float secs; };
+struct Item { char id[40]; uint32_t ts; float secs; bool out; };  // out = a clip Stanley sent
 
 void begin();                  // load the de-dup watermark from NVS
 bool onPush(uint32_t ts);      // true if ts is newer than we've alerted on (→ buzz)

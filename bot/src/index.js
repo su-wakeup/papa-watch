@@ -526,11 +526,22 @@ no emoji, no markdown, under 160 characters. End with "— Papa".`;
     return text.replace(/\s+/g, " ").slice(0, 220);   // watch buffer is 240
 }
 
+// Keep a short history of PAPA's notes in R2 so the watch can show them as a
+// chat timeline (pulled via /notes), not just the single latest retained one.
+async function storeNote(env, text) {
+    if (!env.EMAILS_R2) return;
+    const ts = Math.floor(Date.now() / 1000);
+    await env.EMAILS_R2.put(`note/${ts}.txt`, text, {
+        customMetadata: { ts: String(ts) },
+    });
+}
+
 async function sendDailyQuote(env) {
     const text  = await generateDailyQuote(env);
     const topic = `stopwatch/${env.PAIR_ID}/from-dad`;
     await publishMqtt(env.MQTT_BROKER_WSS, topic,
         JSON.stringify({ cmd: "quote", text }), { retain: true });
+    await storeNote(env, text);
     console.log("[daily-quote] sent:", text);
 }
 
@@ -1277,6 +1288,7 @@ export default {
             const topic = `stopwatch/${env.PAIR_ID}/from-dad`;
             await publishMqtt(env.MQTT_BROKER_WSS, topic,
                 JSON.stringify({ cmd: "quote", text }), { retain: true });
+            await storeNote(env, text);
             return new Response(JSON.stringify({ ok: true, text }, null, 2),
                 { headers: { "content-type": "application/json" } });
         }
@@ -1372,8 +1384,18 @@ export default {
                 if (pcm.length < 2 || pcm.length > 4 * 1024 * 1024)
                     return new Response("bad size", { status: 400 });
                 const secs = (pcm.length / 2 / 16000).toFixed(1);
+                const ts = Math.floor(Date.now() / 1000);
                 await tgSendAudioWav(env.TELEGRAM_BOT_TOKEN, env.PAPA_CHAT_ID,
                     pcm16ToWav(pcm), `🎙️ Stanley · ${secs}s`);
+                // Persist under the same voice/ prefix as inbound clips (so /clip
+                // and the 7-day prune both already cover it), tagged dir:"out" so
+                // the watch renders it as a right-side "sent" bubble and can replay.
+                if (env.EMAILS_R2) {
+                    const id = `out-${ts}-${Math.random().toString(36).slice(2, 8)}`;
+                    await env.EMAILS_R2.put(`voice/${id}.pcm`, pcm, {
+                        customMetadata: { secs: String(secs), ts: String(ts), dir: "out" },
+                    });
+                }
                 return new Response("ok");
             } catch (e) {
                 console.error("[voice upload] failed:", e.stack || e.message);
@@ -1389,9 +1411,27 @@ export default {
                 const ts = +(o.customMetadata?.ts) || Math.floor(o.uploaded.getTime() / 1000);
                 const secs = o.customMetadata?.secs ? +o.customMetadata.secs
                                                     : +(o.size / 2 / 16000).toFixed(1);
-                return { id, ts, secs };
+                const dir = o.customMetadata?.dir || "in";
+                return { id, ts, secs, dir };
             }).sort((a, b) => b.ts - a.ts).slice(0, 20);
             return new Response(JSON.stringify(items), { headers: { "content-type": "application/json" } });
+        }
+
+        // The watch's note history: recent PAPA daily notes, newest first.
+        if (request.method === "GET" && url.pathname === `/voice/${env.VOICE_TOKEN}/notes`) {
+            const listed = await env.EMAILS_R2.list({ prefix: "note/", include: ["customMetadata"] });
+            const recent = listed.objects
+                .map((o) => ({
+                    key: o.key,
+                    ts: +(o.customMetadata?.ts) || Math.floor(o.uploaded.getTime() / 1000),
+                }))
+                .sort((a, b) => b.ts - a.ts)
+                .slice(0, 15);
+            const notes = (await Promise.all(recent.map(async (n) => {
+                const obj = await env.EMAILS_R2.get(n.key);
+                return obj ? { ts: n.ts, text: await obj.text() } : null;
+            }))).filter(Boolean);
+            return new Response(JSON.stringify(notes), { headers: { "content-type": "application/json" } });
         }
 
         // Serve a decoded PAPA voice clip to the watch (raw int16 PCM). The watch
@@ -1452,9 +1492,21 @@ export default {
         if (env.EMAILS_R2) {
             ctx.waitUntil(pruneVoiceInbox(env, event.scheduledTime).catch((e) =>
                 console.error("[cron] voice prune failed:", e.message)));
+            ctx.waitUntil(pruneNotes(env, event.scheduledTime).catch((e) =>
+                console.error("[cron] note prune failed:", e.message)));
         }
     },
 };
+
+// Notes roll over a longer window than voice clips — keep ~30 days of history.
+async function pruneNotes(env, nowMs) {
+    const cutoff = Math.floor(nowMs / 1000) - 30 * 86400;
+    const listed = await env.EMAILS_R2.list({ prefix: "note/", include: ["customMetadata"] });
+    for (const o of listed.objects) {
+        const ts = +(o.customMetadata?.ts) || Math.floor(o.uploaded.getTime() / 1000);
+        if (ts < cutoff) await env.EMAILS_R2.delete(o.key);
+    }
+}
 
 // The PAPA voice inbox is a rolling 7-day window — drop clips older than that.
 async function pruneVoiceInbox(env, nowMs) {
