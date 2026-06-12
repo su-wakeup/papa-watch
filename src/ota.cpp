@@ -1,4 +1,5 @@
 #include "ota.h"
+#include "ota_ui.h"
 #include <Arduino.h>
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
@@ -128,6 +129,14 @@ static bool downloadAndApply(const char* url) {
         return false;
     }
 
+    // Full-screen progress overlay so the long blocking write reads as
+    // "updating", not a frozen face. onProgress fires per block; ota_ui
+    // throttles redraws to integer-% changes.
+    ota_ui::begin();
+    Update.onProgress([](size_t done, size_t total) {
+        ota_ui::progress(total ? (int)((uint64_t)done * 100 / total) : 0);
+    });
+
     WiFiClient* stream = http.getStreamPtr();
     size_t written = Update.writeStream(*stream);
     if (written != (size_t)size) {
@@ -137,11 +146,13 @@ static bool downloadAndApply(const char* url) {
 
     if (!Update.end(true)) {
         Serial.printf("[ota] Update.end failed: %s\n", Update.errorString());
+        ota_ui::dismiss();
         http.end();
         return false;
     }
     http.end();
 
+    ota_ui::progress(100);
     Serial.println("[ota] update applied, restarting in 1s...");
     delay(1000);
     ESP.restart();
