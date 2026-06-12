@@ -3,6 +3,7 @@
 #include "voice_rec.h"
 #include "voice_inbox.h"
 #include "note_inbox.h"
+#include "papa_unread.h"
 #include <lvgl.h>
 #include <string.h>
 #include <stdint.h>
@@ -173,6 +174,7 @@ static void buildTimeline() {
 
 void enter(lv_obj_t* parent) {
     s_root = parent;
+    papa_unread::clear();               // opening the mailbox marks it read
     lv_obj_set_style_bg_color(s_root, lv_color_black(), 0);
     lv_obj_set_style_bg_opa(s_root, LV_OPA_COVER, 0);
 

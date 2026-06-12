@@ -9,7 +9,7 @@
 
 namespace ota {
 
-const char* FIRMWARE_VERSION = "0.9.22";
+const char* FIRMWARE_VERSION = "0.9.23";
 
 // strip leading 'v' if present and parse semantic version into 3 ints
 static void parseSemver(const char* s, int out[3]) {

@@ -36,6 +36,7 @@
 #include "heart_relay.h"
 #include "events_store.h"
 #include "papa_quote.h"
+#include "papa_unread.h"
 #include "voice_play.h"
 #include "voice_inbox.h"
 #include "ota.h"
@@ -549,7 +550,9 @@ void setup() {
         // Daily note from PAPA: {"cmd":"quote","text":".."}  (roadmap #5)
         if (cmd && strcmp(cmd, "quote") == 0) {
             const char* txt = doc["text"] | "";
+            bool fresh = strcmp(txt, papa_quote::text()) != 0;
             papa_quote::set(txt);
+            if (fresh) papa_unread::mark();
             Serial.printf("[quote] %s\n", txt);
             wake_gesture::notifyActivity();   // light up so it's noticed
             hapticHeartbeat();
@@ -565,6 +568,7 @@ void setup() {
         if (cmd && strcmp(cmd, "voice_new") == 0) {
             uint32_t ts = doc["ts"] | 0u;
             if (voice_inbox::onPush(ts)) {
+                papa_unread::mark();
                 wake_gesture::notifyActivity();
                 hapticHeartbeat();                 // gentle buzz, no chime
                 face_lcd::showAlert("PAPA VOICE", 0xC8A050, 2000);
@@ -601,6 +605,7 @@ void setup() {
     });
     events_store::begin();
     papa_quote::begin();
+    papa_unread::begin();
     voice_inbox::begin();
     heart_relay::begin("stanley-dad-2026");
 

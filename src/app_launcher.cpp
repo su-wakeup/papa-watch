@@ -21,9 +21,11 @@
 #include "app_launcher.h"
 #include "app.h"
 #include "status_bar.h"
+#include "papa_unread.h"
 #include <lvgl.h>
 #include <Preferences.h>
 #include <stdint.h>
+#include <string.h>
 
 LV_FONT_DECLARE(mont_light_14);
 LV_FONT_DECLARE(mont_light_32);
@@ -42,6 +44,13 @@ static lv_obj_t* s_hint_b      = nullptr;
 
 static bool        s_animating = false;
 static lv_obj_t*   s_leaving   = nullptr;     // icon to delete on anim complete
+
+// Unread badge on the PAPA icon — one dot, re-placed onto whichever visible
+// slot is PAPA (or hidden when PAPA is off-wheel / nothing unread).
+static lv_obj_t*   s_dot       = nullptr;
+static bool        s_dot_on    = false;       // cached state to avoid per-tick churn
+static int         s_dot_x     = 0;
+static int         s_dot_scale = 0;
 
 static constexpr int      ANIM_MS       = 240;
 // Icons are 224 px native. Center shows at 1.0x (big focal icon); sides shrink
@@ -140,6 +149,7 @@ static void on_rotate_complete(lv_anim_t*) {
 // ─── click handler (single, role-determined by current s_icon_* pointers) ──
 
 static void rotate(int delta);              // forward
+static void refresh_dot();                  // forward
 
 static void on_icon_click(lv_event_t* e) {
     if (s_animating) return;
@@ -324,6 +334,7 @@ void enter(lv_obj_t* parent) {
 
     s_animating = false;
     s_leaving = nullptr;
+    refresh_dot();                   // badge PAPA if there's unread mail
 }
 
 void leave() {
@@ -345,10 +356,52 @@ void leave() {
     s_hint_a = s_hint_b = nullptr;
     s_leaving = nullptr;
     s_animating = false;
+    s_dot = nullptr;                 // deleted by lv_obj_clean above
+    s_dot_on = false; s_dot_x = 0; s_dot_scale = 0;
     status_bar::destroy();
 }
 
-void tick() {}
+// Place (or hide) the unread dot on the PAPA icon. Cheap to call every tick:
+// it early-returns unless the visible state actually changed.
+static void refresh_dot() {
+    if (!s_root) return;
+    bool show = false; int x = 0, scale = 0;
+    if (!s_animating && papa_unread::any()) {
+        const int offs[3]   = { -1, 0, +1 };
+        const int xs[3]     = { POS_LEFT_X, POS_CENTER_X, POS_RIGHT_X };
+        const int scales[3] = { SCALE_SIDE, SCALE_CENTER, SCALE_SIDE };
+        for (int i = 0; i < 3; i++) {
+            if (strcmp(app_at_offset(offs[i])->name, "PAPA") == 0) {
+                show = true; x = xs[i]; scale = scales[i]; break;
+            }
+        }
+    }
+    if (show == s_dot_on && x == s_dot_x && scale == s_dot_scale) return;
+    s_dot_on = show; s_dot_x = x; s_dot_scale = scale;
+
+    if (!show) { if (s_dot) lv_obj_add_flag(s_dot, LV_OBJ_FLAG_HIDDEN); return; }
+
+    if (!s_dot) {
+        s_dot = lv_obj_create(s_root);
+        lv_obj_remove_style_all(s_dot);
+        lv_obj_set_style_radius(s_dot, LV_RADIUS_CIRCLE, 0);
+        lv_obj_set_style_bg_color(s_dot, lv_color_hex(0xFF3B30), 0);   // alert red
+        lv_obj_set_style_bg_opa(s_dot, LV_OPA_COVER, 0);
+        lv_obj_set_style_border_width(s_dot, 2, 0);                    // dark ring lifts it off the glyph
+        lv_obj_set_style_border_color(s_dot, lv_color_black(), 0);
+        lv_obj_remove_flag(s_dot, LV_OBJ_FLAG_CLICKABLE);
+    }
+    lv_obj_remove_flag(s_dot, LV_OBJ_FLAG_HIDDEN);
+    int sz = (scale == SCALE_CENTER) ? 18 : 12;
+    lv_obj_set_size(s_dot, sz, sz);
+    // Upper-right of the icon. Glyph art radius ≈ (224·scale/256)/2, nudged in
+    // to ~0.6 so the dot sits on the art, not out in the corner of the canvas.
+    int r = 224 * scale / 256 / 2 * 6 / 10;
+    lv_obj_align(s_dot, LV_ALIGN_CENTER, x + r, Y_OFFSET - r);
+    lv_obj_move_foreground(s_dot);
+}
+
+void tick() { refresh_dot(); }
 
 void rotate_left()      { if (!s_animating) rotate(-1); }
 void rotate_right()     { if (!s_animating) rotate(+1); }
